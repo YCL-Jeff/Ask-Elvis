@@ -1,50 +1,95 @@
-<a href="https://www.ultralytics.com/" target="_blank"><img src="https://raw.githubusercontent.com/ultralytics/assets/main/logo/Ultralytics_Logotype_Original.svg" width="320" alt="Ultralytics logo"></a>
+Ask Elvis: Equine Long-Range Visual Identification System
 
-# Add YOLOv8 Models to the Project
+Welcome to the Ask Elvis iOS App repository, developed for the Isle of Wight Donkey Sanctuary. This app leverages advanced object detection models under a non-commercial license from Ultralytics to enable long-range visual identification of donkeys by name. Designed for sanctuary staff and visitors, Ask Elvis enhances donkey recognition, supporting welfare and educational activities at the sanctuary.
 
-To utilize the full power of the Ultralytics YOLO iOS App, you'll need to add YOLOv8 models. These models are not included directly in the repository for two main reasons:
+🛠 Project Overview
 
-1. **File Size:** YOLOv8 models can be large (i.e. up to 60 MB), making the repository heavy and cumbersome to clone or download.
-2. **Frequent Updates:** We continuously improve and update YOLOv8 models to enhance performance and accuracy. Including them directly in the repository would make it challenging to keep the app up to date with the latest models.
+Ask Elvis is an iOS application designed to identify donkeys by name at the Isle of Wight Donkey Sanctuary using long-range visual detection. The app supports sanctuary operations by aiding staff in tracking donkey health and welfare and enhances visitor engagement through interactive donkey identification. My contributions include:
 
-There are two ways to add YOLOv8 models to your project:
+ONNX Conversion: Converted trained models to ONNX format for efficient deployment on iOS, ensuring compatibility with CoreML.
 
-## Option 1: Download from GitHub Release Assets
+App Architecture: Developed a modular Swift-based app with a focus on user-friendly interfaces for sanctuary staff and visitors.
 
-For convenience, we provide pre-compiled and optimized YOLOv8 models as release assets on our GitHub repository. This method ensures you get the latest, ready-to-use models without needing additional steps.
+Performance Optimization: Optimized model inference through quantization, reducing latency for real-time identification on iOS devices.
 
-- Visit the [Ultralytics YOLO iOS App GitHub release assets page](https://github.com/ultralytics/yolo-ios-app/releases).
-- Download the desired YOLOv8 model files.
-- Place the downloaded model files into the `YOLO/Models` directory of your project.
+Technical Considerations
 
-## Option 2: Export Models Using the Ultralytics Python Package
+Model Conversion: Models are converted to ONNX with preprocessing steps including image normalization and resizing to 640x640. Input data uses RGB images with bounding box annotations in normalized coordinates, aligned with app requirements.
 
-If you prefer to use specific model versions or need to customize the models, you can export them using the `ultralytics` Python package. This approach provides flexibility in selecting and optimizing models for your specific application needs.
+Target Devices: The app targets iOS devices running iOS 14.0 or later (iOS 17.0+ for optimized models). Minimum hardware is iPhone 8 or newer with an A11 Bionic chip.
 
-1. **Installation:** First, ensure you have the `ultralytics` package installed. If not, you can install it using pip:
+Experimental Plan: Testing involves evaluating quantized models for accuracy (mAP) and inference time across devices (e.g., iPhone 12 vs. iPhone 15). Sample data from the sanctuary (e.g., donkey images with name labels) would aid deployment testing.
 
-   ```sh
-   pip install ultralytics
-   ```
+Application Scenarios: Features include offline identification for remote areas of the sanctuary and database synchronization to log donkey sightings, pending discussion with sanctuary staff.
 
-2. **Export Models:** Use the following Python script to export YOLOv8 models to the CoreML format, optimized for INT8 quantization for better performance on iOS devices. The script exports all YOLOv8 model sizes (`n`, `s`, `m`, `l`, `x`) as CoreML models.
+🛠 Quickstart: Setting Up Ask Elvis
 
-   ```python
-   from ultralytics import YOLO
+Prerequisites
 
-   # Export all YOLOv8 models to CoreML INT8
-   for size in ("n", "s", "m", "l", "x"):  # all YOLOv8 model sizes
-       YOLO(f"yolov8{size}.pt").export(format="coreml", int8=True, nms=True, imgsz=[640, 384])
-   ```
+Xcode: Install from the Mac App Store.
 
-3. **Place Models in Project:** After exporting, locate the CoreML model files and place them in the `YOLO/Models` directory of your project.
+iOS Device: Requires iPhone/iPad running iOS 14.0 or later (iOS 17.0+ for optimized models).
 
-<p align="center">
-<img width="100%" src="https://github.com/ultralytics/ultralytics/assets/26833433/d2c6a7b7-fa8b-4130-a57f-4241f7a42ff2" alt="Ultralytics YOLO XCode screenshot">
-</p>
+Apple Developer Account: Sign up at developer.apple.com.
 
-## Finalizing the Setup
+Installation
 
-Once you've added the models to the `YOLO/Models` directory by either downloading them from GitHub or exporting them using the Ultralytics package, your Ultralytics YOLO iOS App is ready to detect objects with high accuracy and performance.
+Clone the Repository:
 
-By offering these two options, we aim to provide flexibility and ensure you have access to the latest advancements in object detection technology. Whether you're a developer, researcher, or enthusiast, these options allow you to integrate YOLOv8 models into your iOS projects efficiently and effectively.
+git clone https://github.com/ultralytics/yolo-ios-app.git
+
+Open in Xcode:
+
+Open YOLO.xcodeproj in Xcode. Select your Apple Developer account under "Signing & Capabilities."
+
+Add Models:
+
+Convert trained models to ONNX or CoreML format:
+
+from ultralytics import YOLO
+
+model = YOLO("path/to/donkey_model.pt") model.export(format="onnx", int8=True, imgsz=640)
+
+Place models in the YOLO/Models directory.
+
+Run the App:
+
+Connect your iOS device, select it as the run target, and click Run in Xcode.
+
+🚀 Usage
+
+Real-Time Identification: Point the camera at a donkey to display its name and details (e.g., Jimbob, Angel).
+
+Model Selection: Choose from model sizes (nano to x-large) based on device capability and detection range.
+
+📚 Research Plan (ELEC6259 Coursework #3)
+
+Aims: Develop an iOS app for long-range donkey name identification to support Isle of Wight Donkey Sanctuary operations and visitor engagement.
+
+Methodology: Use ONNX for model conversion, Swift for app development, and CoreML for inference. Train models on sanctuary-provided donkey images with name labels. Test on iOS devices for accuracy and speed.
+
+Timeline: Weeks 1–4: Model training and conversion; Weeks 5–8: App development and UI design; Weeks 9–12: Performance testing and refinement (Gantt chart in coursework submission).
+
+Ethical Statement: No human data involved; ethical approval not required. The app respects donkey welfare by minimizing interaction stress.
+
+Health and Safety: No significant risks; app usage adheres to sanctuary safety guidelines (e.g., no smoking/vaping on-site).
+
+Environmental Impact: Minimal, leveraging existing devices for sustainable technology use.
+
+Data Management Plan: Detection logs stored securely on-device with optional cloud sync, encrypted to protect sanctuary data.
+
+Commercial Aspects: Limited to non-commercial use under Ultralytics’ license, with potential for educational tools at the sanctuary.
+
+Legal Aspects: Complies with Ultralytics’ non-commercial license and Apple’s App Store policies. No personal data collected, aligning with GDPR.
+
+💡 Contribute
+
+Contributions are welcome! Review our Contributing Guide and share feedback via our Survey.
+
+📄 License
+
+This project uses a non-commercial license from Ultralytics. See the LICENSE file for details.
+
+🤝 Contact
+
+For issues or questions, use GitHub Issues or join our Discord.
