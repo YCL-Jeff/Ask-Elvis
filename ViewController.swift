@@ -106,6 +106,7 @@ class ViewController: UIViewController {
     private var isProcessing = false
     private var hasDetectedDonkey = false
     private var currentDonkeyBoundingBox: CGRect?
+    private var currentDonkeyName: String?  // 新增：儲存當前識別出的驢子名稱
     
     private lazy var hintLabel: UILabel = {
         let label = UILabel()
@@ -180,8 +181,11 @@ class ViewController: UIViewController {
         
         // 新增驢子保護區網站按鈕到最右側
         let sanctuaryButton = UIBarButtonItem(image: UIImage(systemName: "globe"), style: .plain, target: self, action: #selector(openSanctuaryWebsite))
+        let donkeyInfoButton = UIBarButtonItem(image: UIImage(systemName: "magnifyingglass"), style: .plain, target: self, action: #selector(openDonkeyInfo))
+        
         toolBar.items?.append(UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil))
         toolBar.items?.append(sanctuaryButton)
+        toolBar.items?.append(donkeyInfoButton)
         
         // 移除分享按鈕
         if let items = toolBar.items {
@@ -783,6 +787,23 @@ class ViewController: UIViewController {
         }
     }
 
+    @objc func openDonkeyInfo() {
+        selection.selectionChanged()
+        guard let donkeyName = currentDonkeyName?.lowercased() else {
+            // 如果沒有識別出驢子，顯示提示
+            let alert = UIAlertController(title: "提示", message: "請先識別驢子", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "確定", style: .default))
+            present(alert, animated: true)
+            return
+        }
+        
+        // 根據驢子名稱構建URL
+        let baseURL = "https://www.iowdonkeysanctuary.org/product/"
+        if let url = URL(string: baseURL + donkeyName) {
+            UIApplication.shared.open(url)
+        }
+    }
+
     private func setupHintLabelAndButton() {
         view.addSubview(hintLabel)
         view.addSubview(identifyButton)
@@ -933,6 +954,11 @@ class ViewController: UIViewController {
                         index + 1, 
                         donkeyName, 
                         normalizedScore)
+                    
+                    // 更新當前識別出的驢子名稱（取最高分的那個）
+                    if index == 0 {
+                        self.currentDonkeyName = donkeyName
+                    }
                 }
                 
                 // Clear remaining labels
