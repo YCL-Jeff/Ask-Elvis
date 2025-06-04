@@ -5,31 +5,31 @@ import UIKit
 import Vision
 import CoreImage
 
-// YOLO 模型
+// YOLO model
 var mlModel: MLModel = {
     guard let path = Bundle.main.path(forResource: "best", ofType: "mlmodelc") else {
-        // 列出 Bundle 內容以調試
+        // List Bundle contents for debugging
         let fileManager = FileManager.default
         if let bundlePath = Bundle.main.bundlePath as NSString? {
             do {
                 let contents = try fileManager.contentsOfDirectory(atPath: bundlePath as String)
-                print("Bundle 內容：\(contents)")
+                print("Bundle contents: \(contents)")
                 let modelsPath = bundlePath.appendingPathComponent("Models")
                 if fileManager.fileExists(atPath: modelsPath) {
                     let modelsContents = try fileManager.contentsOfDirectory(atPath: modelsPath)
-                    print("Models/ 資料夾內容：\(modelsContents)")
+                    print("Models/ folder contents: \(modelsContents)")
                 }
             } catch {
-                print("無法列出 Bundle 內容：\(error)")
+                print("Unable to list Bundle contents: \(error)")
             }
         }
-        fatalError("無法找到 best.mlmodelc 檔案，請確認檔案已正確添加到專案")
+        fatalError("Cannot find best.mlmodelc file, please ensure it is correctly added to the project")
     }
     let modelURL = URL(fileURLWithPath: path)
     do {
         return try MLModel(contentsOf: modelURL, configuration: mlmodelConfig)
     } catch {
-        fatalError("無法載入 best.mlmodelc 模型：\(error.localizedDescription)")
+        fatalError("Unable to load best.mlmodelc model: \(error.localizedDescription)")
     }
 }()
 
@@ -41,7 +41,7 @@ var mlmodelConfig: MLModelConfiguration = {
     return config
 }()
 
-// MegaDescriptor 模型
+// MegaDescriptor model
 var megaDescriptorModel: MLModel? = {
     do {
         if let path = Bundle.main.path(forResource: "MegaDescriptor", ofType: "mlmodelc") {
@@ -52,7 +52,7 @@ var megaDescriptorModel: MLModel? = {
         }
         return nil
     } catch {
-        print("無法載入 MegaDescriptor 模型：\(error.localizedDescription)")
+        print("Unable to load MegaDescriptor model: \(error.localizedDescription)")
         return nil
     }
 }()
@@ -69,18 +69,41 @@ class ViewController: UIViewController {
     @IBOutlet var playButtonOutlet: UIBarButtonItem!
     @IBOutlet var pauseButtonOutlet: UIBarButtonItem!
     @IBOutlet weak var labelName: UILabel!
-    @IBOutlet weak var labelFPS: UILabel!
     @IBOutlet weak var labelZoom: UILabel!
     @IBOutlet weak var labelVersion: UILabel!
     @IBOutlet weak var activityIndicator: UIActivityIndicatorView!
     @IBOutlet weak var focus: UIImageView!
     @IBOutlet weak var toolBar: UIToolbar!
 
-    // 新增UI元素
+    // Add status label
+    private lazy var statusLabel: UILabel = {
+        let label = UILabel()
+        label.textColor = .white
+        label.textAlignment = .center
+        label.font = .systemFont(ofSize: 15)  // 調整為標準正文大小
+        label.numberOfLines = 2
+        label.text = "Loading model..."
+        return label
+    }()
+
+    // Add processing time label
+    private lazy var processingTimeLabel: UILabel = {
+        let label = UILabel()
+        label.textColor = .white
+        label.textAlignment = .center
+        label.font = .systemFont(ofSize: 12)
+        label.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        label.layer.cornerRadius = 4
+        label.clipsToBounds = true
+        label.text = "Processing: 0ms"
+        return label
+    }()
+
+    // New UI elements
     private lazy var resultStackView: UIStackView = {
         let stack = UIStackView()
         stack.axis = .vertical
-        stack.spacing = 8
+        stack.spacing = 8  // 調整為標準間距
         stack.alignment = .center
         stack.distribution = .fillEqually
         stack.isHidden = true
@@ -92,7 +115,7 @@ class ViewController: UIViewController {
             let label = UILabel()
             label.textColor = .white
             label.textAlignment = .center
-            label.font = .systemFont(ofSize: 16, weight: .medium)
+            label.font = .systemFont(ofSize: 15)  // 調整為標準正文大小
             label.backgroundColor = UIColor.black.withAlphaComponent(0.6)
             label.layer.cornerRadius = 8
             label.clipsToBounds = true
@@ -100,19 +123,20 @@ class ViewController: UIViewController {
         }
     }()
 
-    // 新增屬性
+    // New properties
     private var continuousResults: [(name: String, score: Float, confidence: Float)] = []
-    private let requiredResults = 2  // 只需要2次結果
+    private let requiredResults = 2  // Only need 2 results
     private var isProcessing = false
     private var hasDetectedDonkey = false
     private var currentDonkeyBoundingBox: CGRect?
-    private var currentDonkeyName: String?  // 新增：儲存當前識別出的驢子名稱
+    private var currentDonkeyName: String?  // Store the currently recognized donkey name
     
     private lazy var hintLabel: UILabel = {
         let label = UILabel()
         label.text = "Point camera at donkey"
         label.textColor = .white
         label.textAlignment = .center
+        label.font = .systemFont(ofSize: 15)  // 調整為標準正文大小
         label.backgroundColor = UIColor.black.withAlphaComponent(0.6)
         label.layer.cornerRadius = 8
         label.clipsToBounds = true
@@ -160,7 +184,7 @@ class ViewController: UIViewController {
         return request
     }()
 
-    // 添加特徵緩存
+    // Add feature cache
     private var featureCache: [String: [Float]] = [:]
     private let cacheQueue = DispatchQueue(label: "com.donkeyrecognition.featurecache")
 
@@ -176,15 +200,49 @@ class ViewController: UIViewController {
         startVideo()
         setModel()
         
-        // 設定 toolbar 高度
-        toolBar.frame.size.height = 49
+        // Set toolbar height and style
+        toolBar.frame.size.height = 49  // 標準工具列高度
+        toolBar.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        
+        // Add status label to toolbar
+        let statusItem = UIBarButtonItem(customView: statusLabel)
+        statusLabel.frame = CGRect(x: 0, y: 0, width: 200, height: 44)  // 標準按鈕高度
         
         // 新增驢子保護區網站按鈕到最右側
         let sanctuaryButton = UIBarButtonItem(image: UIImage(systemName: "globe"), style: .plain, target: self, action: #selector(openSanctuaryWebsite))
         let donkeyInfoButton = UIBarButtonItem(image: UIImage(systemName: "magnifyingglass"), style: .plain, target: self, action: #selector(openDonkeyInfo))
+        let saveButton = UIBarButtonItem(image: UIImage(systemName: "square.and.arrow.down"), style: .plain, target: self, action: #selector(saveToPhotoLibrary))
         
+        // 設置按鈕顏色和大小
+        let buttonColor = UIColor.white
+        sanctuaryButton.tintColor = buttonColor
+        donkeyInfoButton.tintColor = buttonColor
+        saveButton.tintColor = buttonColor
+        
+        // 設置按鈕大小
+        let buttonSize = CGSize(width: 44, height: 44)  // 最小點擊區域
+        sanctuaryButton.customView?.frame.size = buttonSize
+        donkeyInfoButton.customView?.frame.size = buttonSize
+        saveButton.customView?.frame.size = buttonSize
+        
+        // 添加彈性空間和按鈕到工具列
         toolBar.items?.append(UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil))
+        toolBar.items?.append(statusItem)
+        toolBar.items?.append(UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil))
+        toolBar.items?.append(saveButton)
+        
+        // 添加固定間距
+        let spacing = UIBarButtonItem(barButtonSystemItem: .fixedSpace, target: nil, action: nil)
+        spacing.width = 8
+        toolBar.items?.append(spacing)
+        
         toolBar.items?.append(sanctuaryButton)
+        
+        // 添加固定間距
+        let spacing2 = UIBarButtonItem(barButtonSystemItem: .fixedSpace, target: nil, action: nil)
+        spacing2.width = 8
+        toolBar.items?.append(spacing2)
+        
         toolBar.items?.append(donkeyInfoButton)
         
         // 移除分享按鈕
@@ -235,12 +293,23 @@ class ViewController: UIViewController {
                         if firstFeature.count != 768 {
                             print("警告：特徵向量長度不為 768，可能導致匹配失敗")
                         }
+                        
+                        // 更新狀態標籤
+                        DispatchQueue.main.async {
+                            self.statusLabel.text = "Model: ✅\nFeatures: \(firstFeature.count) (\(self.features.count))"
+                        }
                     }
                 } catch {
                     print("無法載入 features_and_labels.json 檔案，錯誤：\(error.localizedDescription)")
+                    DispatchQueue.main.async {
+                        self.statusLabel.text = "Model: ❌\nFeatures: Error"
+                    }
                 }
             } else {
                 print("無法找到 features_and_labels.json 檔案，請確認檔案已正確添加到專案")
+                DispatchQueue.main.async {
+                    self.statusLabel.text = "Model: ❌\nFeatures: Not found"
+                }
             }
         }
 
@@ -349,6 +418,7 @@ class ViewController: UIViewController {
                 }
 
                 self.videoCapture.start()
+                self.updateStatusLabel(frameSize: "720.0x1280.0")
             } else {
                 print("無法初始化視訊捕捉")
             }
@@ -416,10 +486,19 @@ class ViewController: UIViewController {
                 self.hintLabel.isHidden = self.hasDetectedDonkey
                 self.identifyButton.isHidden = !self.hasDetectedDonkey
                 
-                if let firstDonkey = donkeyResults.first {
-                    self.currentDonkeyBoundingBox = firstDonkey.boundingBox
-                    // 只顯示 YOLO 的檢測結果
-                    self.show(predictions: [DetectionResult(boundingBox: firstDonkey.boundingBox, name: "Donkey", confidence: firstDonkey.confidence)])
+                if !donkeyResults.isEmpty {
+                    // 轉換所有檢測到的驢子為 DetectionResult
+                    let predictions = donkeyResults.map { donkey in
+                        DetectionResult(
+                            boundingBox: donkey.boundingBox,
+                            name: "Donkey",
+                            confidence: donkey.confidence
+                        )
+                    }
+                    self.show(predictions: predictions)
+                    
+                    // 保存第一個驢子的邊界框用於特徵提取
+                    self.currentDonkeyBoundingBox = donkeyResults.first?.boundingBox
                 } else {
                     self.currentDonkeyBoundingBox = nil
                     self.show(predictions: [])
@@ -431,14 +510,6 @@ class ViewController: UIViewController {
                 self.currentDonkeyBoundingBox = nil
                 self.show(predictions: [])
             }
-            
-            // 更新 FPS 顯示
-            if self.t1 < 10.0 {
-                self.t2 = self.t1 * 0.05 + self.t2 * 0.95
-            }
-            self.t4 = (CACurrentMediaTime() - self.t3) * 0.05 + self.t4 * 0.95
-            self.labelFPS?.text = String(format: "%.1f FPS - %.1f ms", 1 / self.t4, self.t2 * 1000)
-            self.t3 = CACurrentMediaTime()
         }
     }
 
@@ -486,9 +557,25 @@ class ViewController: UIViewController {
                     }
 
                     rect = VNImageRectForNormalizedRect(rect, Int(width), Int(height))
-
-                    let label = String(format: "%@ %.1f%%", prediction.name, prediction.confidence * 100)
-                    boundingBoxViews[i].show(frame: rect, label: label)
+                    
+                    // Check box size
+                    let boxArea = rect.width * rect.height
+                    let screenArea = width * height
+                    let areaRatio = boxArea / screenArea
+                    
+                    // Set box color and display logic
+                    if areaRatio > 0.8 {  // Box too large, likely false detection
+                        boundingBoxViews[i].hide()
+                        self.hasDetectedDonkey = false
+                        self.hintLabel.isHidden = false
+                        self.identifyButton.isHidden = true
+                    } else if areaRatio < 0.05 {  // Box too small, too far away
+                        let label = String(format: "%@ %.1f%%", prediction.name, prediction.confidence * 100)
+                        boundingBoxViews[i].show(frame: rect, label: label, color: UIColor.red)
+                    } else {  // Normal distance
+                        let label = String(format: "%@ %.1f%%", prediction.name, prediction.confidence * 100)
+                        boundingBoxViews[i].show(frame: rect, label: label, color: UIColor.green)
+                    }
                 } else {
                     boundingBoxViews[i].hide()
                 }
@@ -520,9 +607,25 @@ class ViewController: UIViewController {
                     rect.origin.y = height - (rect.origin.y * shortSide * scaleY - offsetY + rect.size.height * shortSide * scaleY)
                     rect.size.width *= longSide * scaleX
                     rect.size.height *= shortSide * scaleY
-
-                    let label = String(format: "%@ %.1f%%", prediction.name, prediction.confidence * 100)
-                    boundingBoxViews[i].show(frame: rect, label: label)
+                    
+                    // Check box size
+                    let boxArea = rect.width * rect.height
+                    let screenArea = width * height
+                    let areaRatio = boxArea / screenArea
+                    
+                    // Set box color and display logic
+                    if areaRatio > 0.8 {  // Box too large, likely false detection
+                        boundingBoxViews[i].hide()
+                        self.hasDetectedDonkey = false
+                        self.hintLabel.isHidden = false
+                        self.identifyButton.isHidden = true
+                    } else if areaRatio < 0.05 {  // Box too small, too far away
+                        let label = String(format: "%@ %.1f%%", prediction.name, prediction.confidence * 100)
+                        boundingBoxViews[i].show(frame: rect, label: label, color: UIColor.red)
+                    } else {  // Normal distance
+                        let label = String(format: "%@ %.1f%%", prediction.name, prediction.confidence * 100)
+                        boundingBoxViews[i].show(frame: rect, label: label, color: UIColor.green)
+                    }
                 } else {
                     boundingBoxViews[i].hide()
                 }
@@ -782,7 +885,7 @@ class ViewController: UIViewController {
 
     @objc func openSanctuaryWebsite() {
         selection.selectionChanged()
-        if let url = URL(string: "https://www.thedonkeysanctuary.org.uk") {
+        if let url = URL(string: "https://www.iowdonkeysanctuary.org") {
             UIApplication.shared.open(url)
         }
     }
@@ -804,6 +907,35 @@ class ViewController: UIViewController {
         }
     }
 
+    @objc private func saveToPhotoLibrary() {
+        guard hasDetectedDonkey else {
+            let alert = UIAlertController(title: "提示", message: "請先識別驢子", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "確定", style: .default))
+            present(alert, animated: true)
+            return
+        }
+        
+        // 拍攝當前畫面
+        let settings = AVCapturePhotoSettings()
+        self.videoCapture.cameraOutput.capturePhoto(with: settings, delegate: self as AVCapturePhotoCaptureDelegate)
+    }
+    
+    private func saveImageToPhotoLibrary(_ image: UIImage) {
+        UIImageWriteToSavedPhotosAlbum(image, self, #selector(image(_:didFinishSavingWithError:contextInfo:)), nil)
+    }
+    
+    @objc private func image(_ image: UIImage, didFinishSavingWithError error: Error?, contextInfo: UnsafeRawPointer) {
+        if let error = error {
+            let alert = UIAlertController(title: "保存失敗", message: error.localizedDescription, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "確定", style: .default))
+            present(alert, animated: true)
+        } else {
+            let alert = UIAlertController(title: "保存成功", message: "識別結果已保存到相簿", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "確定", style: .default))
+            present(alert, animated: true)
+        }
+    }
+
     private func setupHintLabelAndButton() {
         view.addSubview(hintLabel)
         view.addSubview(identifyButton)
@@ -813,14 +945,14 @@ class ViewController: UIViewController {
         
         NSLayoutConstraint.activate([
             hintLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            hintLabel.bottomAnchor.constraint(equalTo: toolBar.topAnchor, constant: -20),
-            hintLabel.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -40),
-            hintLabel.heightAnchor.constraint(equalToConstant: 40),
+            hintLabel.bottomAnchor.constraint(equalTo: toolBar.topAnchor, constant: -16),  // 標準邊距
+            hintLabel.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -32),  // 標準邊距
+            hintLabel.heightAnchor.constraint(equalToConstant: 44),  // 最小點擊區域
             
             identifyButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            identifyButton.bottomAnchor.constraint(equalTo: toolBar.topAnchor, constant: -20),
+            identifyButton.bottomAnchor.constraint(equalTo: toolBar.topAnchor, constant: -16),  // 標準邊距
             identifyButton.widthAnchor.constraint(equalToConstant: 200),
-            identifyButton.heightAnchor.constraint(equalToConstant: 40)
+            identifyButton.heightAnchor.constraint(equalToConstant: 44)  // 最小點擊區域
         ])
     }
     
@@ -831,7 +963,7 @@ class ViewController: UIViewController {
         // 設置約束
         NSLayoutConstraint.activate([
             resultStackView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            resultStackView.topAnchor.constraint(equalTo: labelName.bottomAnchor, constant: 20),
+            resultStackView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -view.bounds.height / 3),  // 修改為螢幕下方 1/3
             resultStackView.widthAnchor.constraint(equalToConstant: 200)
         ])
         
@@ -933,7 +1065,10 @@ class ViewController: UIViewController {
             }.prefix(3)
             
             let endTime = CACurrentMediaTime()
-            print("\nTotal processing time: \((endTime - startTime) * 1000)ms")
+            let processingTime = (endTime - startTime) * 1000
+            
+            // Update status label with processing time
+            self.updateStatusLabel(processingTime: processingTime)
             
             // Update UI
             DispatchQueue.main.async { [weak self] in
@@ -945,7 +1080,6 @@ class ViewController: UIViewController {
                 for (index, result) in topResults.enumerated() {
                     let donkeyName = result.key
                     let maxScore = result.value.maxScore
-                    let count = result.value.count
                     
                     // Calculate normalized confidence score (0-100%)
                     let normalizedScore = min(maxScore * 100, 100)
@@ -978,6 +1112,25 @@ class ViewController: UIViewController {
             self.isProcessing = false
             self.activityIndicator.stopAnimating()
             self.labelName.text = "Ask ELVIS"
+        }
+    }
+
+    private func updateStatusLabel(frameSize: String? = nil, processingTime: Double? = nil) {
+        var statusText = ""
+        
+        // Add frame size if available
+        if let size = frameSize {
+            statusText += "Frame: \(size)\n"
+        }
+        
+        // Add processing time if available
+        if let time = processingTime {
+            statusText += "Processing: \(Int(time))ms"
+        }
+        
+        // Update label on main thread
+        DispatchQueue.main.async {
+            self.statusLabel.text = statusText
         }
     }
 }

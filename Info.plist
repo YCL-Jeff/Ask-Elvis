@@ -21,7 +21,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>212</string>
+	<string>252</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
@@ -29,11 +29,11 @@
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Ask ELVIS 需要存取您的相機來識別驢子並即時顯示結果 🐴</string>
+	<string>Ask ELVIS needs camera access to identify donkeys and show real-time results 🐴</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>儲存識別結果到相簿。</string>
+	<string>Save identification results to photo library.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>查看相簿中的圖片並進行驢子識別。</string>
+	<string>Access photo library to identify donkeys in saved images.</string>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

@@ -2,12 +2,12 @@ import AVFoundation
 import CoreVideo
 import UIKit
 
-// 定義處理視訊畫面捕捉事件的協議
-public protocol VideoCaptureDelegate: AnyObject {
-    func videoCapture(_ capture: VideoCapture, didCaptureVideoFrame: CMSampleBuffer)
+// Protocol for handling video frame capture events
+protocol VideoCaptureDelegate: AnyObject {
+    func videoCapture(_ capture: VideoCapture, didCaptureVideoFrame sampleBuffer: CMSampleBuffer)
 }
 
-// 選擇最佳的後置攝影機設備，簡化為只使用廣角攝影機
+// Select the best back camera device, simplified to only use wide-angle camera
 func bestCaptureDevice(for position: AVCaptureDevice.Position) -> AVCaptureDevice {
     if position == .back {
         if let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) {
@@ -27,8 +27,8 @@ func bestCaptureDevice(for position: AVCaptureDevice.Position) -> AVCaptureDevic
 }
 
 public class VideoCapture: NSObject {
-    public var previewLayer: AVCaptureVideoPreviewLayer?
-    public weak var delegate: VideoCaptureDelegate?
+    var previewLayer: AVCaptureVideoPreviewLayer?
+    weak var delegate: VideoCaptureDelegate?
 
     let captureDevice = bestCaptureDevice(for: .back)
     let captureSession = AVCaptureSession()
@@ -36,9 +36,9 @@ public class VideoCapture: NSObject {
     var cameraOutput = AVCapturePhotoOutput()
     let queue = DispatchQueue(label: "camera-queue")
 
-    // 配置攝影機和捕捉會話，使用指定的會話預設值
-    public func setUp(
-        sessionPreset: AVCaptureSession.Preset = .hd1280x720,  // 改回較低解析度以提升性能
+    // Configure camera and capture session with specified session preset
+    func setUp(
+        sessionPreset: AVCaptureSession.Preset = .hd1280x720,  // Lower resolution for better performance
         completion: @escaping (Bool) -> Void
     ) {
         queue.async {
