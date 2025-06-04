@@ -76,6 +76,59 @@ class ViewController: UIViewController {
     @IBOutlet weak var focus: UIImageView!
     @IBOutlet weak var toolBar: UIToolbar!
 
+    // 新增UI元素
+    private lazy var resultStackView: UIStackView = {
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.spacing = 8
+        stack.alignment = .center
+        stack.distribution = .fillEqually
+        stack.isHidden = true
+        return stack
+    }()
+    
+    private lazy var resultLabels: [UILabel] = {
+        return (0..<3).map { _ in
+            let label = UILabel()
+            label.textColor = .white
+            label.textAlignment = .center
+            label.font = .systemFont(ofSize: 16, weight: .medium)
+            label.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+            label.layer.cornerRadius = 8
+            label.clipsToBounds = true
+            return label
+        }
+    }()
+
+    // 新增屬性
+    private var continuousResults: [(name: String, score: Float, confidence: Float)] = []
+    private let requiredResults = 2  // 只需要2次結果
+    private var isProcessing = false
+    private var hasDetectedDonkey = false
+    private var currentDonkeyBoundingBox: CGRect?
+    
+    private lazy var hintLabel: UILabel = {
+        let label = UILabel()
+        label.text = "Point camera at donkey"
+        label.textColor = .white
+        label.textAlignment = .center
+        label.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        label.layer.cornerRadius = 8
+        label.clipsToBounds = true
+        return label
+    }()
+    
+    private lazy var identifyButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("Identify Donkey", for: .normal)
+        button.setTitleColor(.white, for: .normal)
+        button.backgroundColor = .systemBlue
+        button.layer.cornerRadius = 8
+        button.addTarget(self, action: #selector(identifyButtonTapped), for: .touchUpInside)
+        button.isHidden = true
+        return button
+    }()
+
     let selection = UISelectionFeedbackGenerator()
     var detector = try! VNCoreMLModel(for: mlModel)
     var session: AVCaptureSession!
@@ -109,7 +162,6 @@ class ViewController: UIViewController {
     // 添加特徵緩存
     private var featureCache: [String: [Float]] = [:]
     private let cacheQueue = DispatchQueue(label: "com.donkeyrecognition.featurecache")
-    private var isProcessing = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -187,6 +239,9 @@ class ViewController: UIViewController {
                 print("無法找到 features_and_labels.json 檔案，請確認檔案已正確添加到專案")
             }
         }
+
+        setupHintLabelAndButton()
+        setupResultLabels()
     }
 
     override func viewWillTransition(to size: CGSize, with coordinator: any UIViewControllerTransitionCoordinator) {
@@ -343,171 +398,37 @@ class ViewController: UIViewController {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             
-            print("\n=== 開始處理觀察結果 ===")
-            
             if let error = error {
                 print("❌ 請求錯誤：\(error.localizedDescription)")
             }
             
             if let results = request.results as? [VNRecognizedObjectObservation] {
-                print("✅ 成功獲取 YOLO 檢測結果，數量：\(results.count)")
-                
                 let donkeyResults = results.filter { observation in
                     observation.labels.contains { $0.identifier == self.donkeyClassLabel }
                 }
-                print("找到驢子數量：\(donkeyResults.count)")
-
-                // 如果正在處理中，直接返回
-                if self.isProcessing {
-                    print("⚠️ 正在處理中，跳過此幀")
-                    return
-                }
                 
-                // 保存當前緩衝區的副本
-                guard let currentBuffer = self.currentBuffer else {
-                    print("❌ 當前緩衝區為空")
-                    self.show(predictions: donkeyResults.map { DetectionResult(boundingBox: $0.boundingBox, name: "Donkey", confidence: $0.confidence) })
-                    return
-                }
+                // 更新 UI 狀態
+                self.hasDetectedDonkey = !donkeyResults.isEmpty
+                self.hintLabel.isHidden = self.hasDetectedDonkey
+                self.identifyButton.isHidden = !self.hasDetectedDonkey
                 
-                // 創建緩衝區的副本
-                var copiedBuffer: CVPixelBuffer?
-                let status = CVPixelBufferCreate(
-                    kCFAllocatorDefault,
-                    CVPixelBufferGetWidth(currentBuffer),
-                    CVPixelBufferGetHeight(currentBuffer),
-                    CVPixelBufferGetPixelFormatType(currentBuffer),
-                    nil,
-                    &copiedBuffer
-                )
-                
-                guard status == kCVReturnSuccess, let copiedBuffer = copiedBuffer else {
-                    print("❌ 無法創建緩衝區副本")
-                    self.show(predictions: donkeyResults.map { DetectionResult(boundingBox: $0.boundingBox, name: "Donkey", confidence: $0.confidence) })
-                    return
-                }
-                
-                CVPixelBufferLockBaseAddress(currentBuffer, .readOnly)
-                CVPixelBufferLockBaseAddress(copiedBuffer, [])
-                
-                let bytesPerRow = CVPixelBufferGetBytesPerRow(currentBuffer)
-                let height = CVPixelBufferGetHeight(currentBuffer)
-                
-                if let sourceData = CVPixelBufferGetBaseAddress(currentBuffer),
-                   let destData = CVPixelBufferGetBaseAddress(copiedBuffer) {
-                    memcpy(destData, sourceData, bytesPerRow * height)
-                }
-                
-                CVPixelBufferUnlockBaseAddress(currentBuffer, .readOnly)
-                CVPixelBufferUnlockBaseAddress(copiedBuffer, [])
-                
-                print("✅ 成功創建緩衝區副本")
-                
-                let ciImage = CIImage(cvPixelBuffer: copiedBuffer)
-                print("✅ 成功創建 CIImage")
-
-                // 設置處理標誌
-                self.isProcessing = true
-                
-                // 在後台線程處理特徵提取
-                DispatchQueue.global(qos: .userInitiated).async {
-                    var updatedResults: [DetectionResult] = []
-                    
-                    for (index, observation) in donkeyResults.enumerated() {
-                        print("\n處理第 \(index + 1) 個驢子檢測結果")
-                        
-                        let imgWidth = CGFloat(CVPixelBufferGetWidth(copiedBuffer))
-                        let imgHeight = CGFloat(CVPixelBufferGetHeight(copiedBuffer))
-                        let bbox = self.yoloToPixel(bbox: observation.boundingBox, imgWidth: imgWidth, imgHeight: imgHeight)
-                        print("圖像尺寸：\(imgWidth)x\(imgHeight)")
-                        print("邊界框：\(bbox)")
-
-                        // 檢查特徵庫是否已載入
-                        guard !self.features.isEmpty, !self.labels.isEmpty else {
-                            print("❌ 特徵庫尚未載入")
-                            updatedResults.append(DetectionResult(boundingBox: observation.boundingBox, name: "Donkey", confidence: observation.confidence))
-                            continue
-                        }
-                        print("✅ 特徵庫已載入，特徵數量：\(self.features.count)，標籤數量：\(self.labels.count)")
-
-                        // 預處理圖像並提取特徵
-                        guard let croppedBuffer = self.preprocessImage(ciImage, bbox: bbox) else {
-                            print("❌ 圖像預處理失敗")
-                            updatedResults.append(DetectionResult(boundingBox: observation.boundingBox, name: "Donkey", confidence: observation.confidence))
-                            continue
-                        }
-                        print("✅ 圖像預處理成功")
-
-                        // 生成緩存鍵
-                        let cacheKey = "\(bbox.origin.x)_\(bbox.origin.y)_\(bbox.width)_\(bbox.height)"
-                        
-                        // 檢查緩存
-                        var queryFeature: [Float]?
-                        self.cacheQueue.sync {
-                            queryFeature = self.featureCache[cacheKey]
-                        }
-                        
-                        if queryFeature == nil {
-                            queryFeature = self.extractFeatures(from: croppedBuffer)
-                            if let feature = queryFeature {
-                                self.cacheQueue.async {
-                                    self.featureCache[cacheKey] = feature
-                                    // 限制緩存大小
-                                    if self.featureCache.count > 100 {
-                                        self.featureCache.removeValue(forKey: self.featureCache.keys.first!)
-                                    }
-                                }
-                            }
-                        } else {
-                            print("✅ 使用緩存的特徵")
-                        }
-
-                        guard let feature = queryFeature else {
-                            print("❌ 特徵提取失敗")
-                            updatedResults.append(DetectionResult(boundingBox: observation.boundingBox, name: "Donkey", confidence: observation.confidence))
-                            continue
-                        }
-                        print("✅ 特徵提取成功，特徵向量長度：\(feature.count)")
-
-                        // 特徵匹配
-                        var bestScore: Float = -1.0
-                        var bestIndex = 0
-                        for (index, storedFeature) in self.features.enumerated() {
-                            let score = self.cosineSimilarity(feature, storedFeature)
-                            if score > bestScore {
-                                bestScore = score
-                                bestIndex = index
-                            }
-                        }
-                        print("最佳匹配分數：\(bestScore)")
-                        print("最佳匹配索引：\(bestIndex)")
-
-                        // 使用特徵匹配的結果
-                        let donkeyName = self.labels[bestIndex].split(separator: "_").first ?? "Donkey"
-                        updatedResults.append(DetectionResult(boundingBox: observation.boundingBox, name: String(donkeyName), confidence: observation.confidence))
-                        print("✅ 檢測到驢子：\(donkeyName), 置信度：\(observation.confidence * 100)%, 相似度：\(bestScore)")
-                    }
-
-                    // 在主線程更新 UI
-                    DispatchQueue.main.async {
-                        // 只在有結果時更新顯示
-                        if !updatedResults.isEmpty {
-                            self.show(predictions: updatedResults)
-                        }
-                        print("=== 處理完成 ===\n")
-                        
-                        // 重置處理標誌
-                        self.isProcessing = false
-                    }
+                if let firstDonkey = donkeyResults.first {
+                    self.currentDonkeyBoundingBox = firstDonkey.boundingBox
+                    // 只顯示 YOLO 的檢測結果
+                    self.show(predictions: [DetectionResult(boundingBox: firstDonkey.boundingBox, name: "Donkey", confidence: firstDonkey.confidence)])
+                } else {
+                    self.currentDonkeyBoundingBox = nil
+                    self.show(predictions: [])
                 }
             } else {
-                print("❌ 無法獲取 YOLO 檢測結果")
-                // 只在有結果時更新顯示
-                if let results = request.results as? [VNRecognizedObjectObservation], !results.isEmpty {
-                    self.show(predictions: results.map { DetectionResult(boundingBox: $0.boundingBox, name: "Donkey", confidence: $0.confidence) })
-                }
+                self.hasDetectedDonkey = false
+                self.hintLabel.isHidden = false
+                self.identifyButton.isHidden = true
+                self.currentDonkeyBoundingBox = nil
+                self.show(predictions: [])
             }
-
+            
+            // 更新 FPS 顯示
             if self.t1 < 10.0 {
                 self.t2 = self.t1 * 0.05 + self.t2 * 0.95
             }
@@ -663,7 +584,7 @@ class ViewController: UIViewController {
         let width = 224
         let height = 224
         
-        // 創建 CVPixelBuffer 的屬性
+        // Create CVPixelBuffer attributes
         let attrs = [
             kCVPixelBufferCGImageCompatibilityKey: kCFBooleanTrue,
             kCVPixelBufferCGBitmapContextCompatibilityKey: kCFBooleanTrue
@@ -686,7 +607,7 @@ class ViewController: UIViewController {
 
         CVPixelBufferLockBaseAddress(buffer, [])
         
-        // 創建 CGContext
+        // Create CGContext
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         guard let context2 = CGContext(
             data: CVPixelBufferGetBaseAddress(buffer),
@@ -702,11 +623,11 @@ class ViewController: UIViewController {
             return nil
         }
         
-        // 設置背景為白色
+        // Set white background
         context2.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
         context2.fill(CGRect(x: 0, y: 0, width: width, height: height))
         
-        // 繪製圖像
+        // Draw image
         context2.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
         
         CVPixelBufferUnlockBaseAddress(buffer, [])
@@ -716,130 +637,321 @@ class ViewController: UIViewController {
     }
 
     func extractFeatures(from pixelBuffer: CVPixelBuffer) -> [Float]? {
-        print("開始特徵提取...")
+        print("Starting feature extraction...")
         
         guard let megaDescriptorModel = megaDescriptorModel else {
-            print("❌ MegaDescriptor 模型未載入")
+            print("❌ MegaDescriptor model not loaded")
             return nil
         }
-        print("✅ MegaDescriptor 模型已載入")
+        print("✅ MegaDescriptor model loaded")
 
         do {
-            // 獲取模型的輸入描述
+            // Get model input description
             let modelDescription = megaDescriptorModel.modelDescription
-            print("模型輸入描述：")
+            print("Model input description:")
             for input in modelDescription.inputDescriptionsByName {
-                print("- 輸入名稱：\(input.key), 類型：\(input.value.type)")
+                print("- Input name: \(input.key), type: \(input.value.type)")
             }
             
-            // 獲取模型的輸出描述
-            print("模型輸出描述：")
+            // Get model output description
+            print("Model output description:")
             for output in modelDescription.outputDescriptionsByName {
-                print("- 輸出名稱：\(output.key), 類型：\(output.value.type)")
+                print("- Output name: \(output.key), type: \(output.value.type)")
             }
             
-            // 創建 MLFeatureProvider
+            // Create MLFeatureProvider
             let inputFeatureProvider = try MLDictionaryFeatureProvider(dictionary: [
                 "input": MLFeatureValue(pixelBuffer: pixelBuffer)
             ])
             
-            // 執行預測
-            print("開始執行模型預測...")
+            // Execute prediction
+            print("Starting model prediction...")
             let startTime = CACurrentMediaTime()
             let outputFeatures = try megaDescriptorModel.prediction(from: inputFeatureProvider)
             let endTime = CACurrentMediaTime()
-            print("✅ 模型預測完成，耗時：\((endTime - startTime) * 1000)ms")
+            print("✅ Model prediction completed, time: \((endTime - startTime) * 1000)ms")
             
-            // 嘗試不同的輸出特徵名稱
+            // Try different output feature names
             let possibleOutputNames = ["output", "features", "embeddings", "descriptor"]
             var featureVector: [Float]?
             
             for name in possibleOutputNames {
                 if let outputFeature = outputFeatures.featureValue(for: name) {
-                    print("找到輸出特徵：\(name)")
+                    print("Found output feature: \(name)")
                     
                     switch outputFeature.type {
                     case .multiArray:
                         guard let multiArray = outputFeature.multiArrayValue else {
-                            print("❌ 無法獲取多維數組值")
+                            print("❌ Unable to get multi-array value")
                             continue
                         }
-                        print("✅ 成功獲取多維數組，形狀：\(multiArray.shape)")
+                        print("✅ Successfully got multi-array, shape: \(multiArray.shape)")
                         
-                        // 轉換為 Float 數組
+                        // Convert to Float array
                         let count = multiArray.count
                         var vector = [Float](repeating: 0, count: count)
                         for i in 0..<count {
                             vector[i] = Float(multiArray[i].floatValue)
                         }
                         
-                        print("✅ 成功轉換特徵向量，長度：\(vector.count)")
+                        print("✅ Successfully converted feature vector, length: \(vector.count)")
                         
-                        // 檢查特徵向量
+                        // Check feature vector
                         if vector.count != 768 {
-                            print("⚠️ 特徵向量長度不匹配：期望 768，實際 \(vector.count)")
+                            print("⚠️ Feature vector length mismatch: expected 768, got \(vector.count)")
                         }
                         
-                        // 檢查是否全為零
+                        // Check if all zeros
                         let isAllZero = vector.allSatisfy { $0 == 0 }
                         if isAllZero {
-                            print("❌ 特徵向量全為零")
+                            print("❌ Feature vector is all zeros")
                             continue
                         }
                         
-                        // 輸出統計信息
+                        // Output statistics
                         let min = vector.min() ?? 0
                         let max = vector.max() ?? 0
                         let mean = vector.reduce(0, +) / Float(vector.count)
-                        print("特徵向量統計：最小值=\(min), 最大值=\(max), 平均值=\(mean)")
+                        print("Feature vector statistics: min=\(min), max=\(max), mean=\(mean)")
                         
                         featureVector = vector
                         break
                         
                     case .dictionary:
-                        print("❌ 輸出特徵是字典類型，期望多維數組")
+                        print("❌ Output feature is dictionary type, expected multi-array")
                         continue
                         
                     default:
-                        print("❌ 不支持的輸出特徵類型：\(outputFeature.type)")
+                        print("❌ Unsupported output feature type: \(outputFeature.type)")
                         continue
                     }
                 }
             }
             
             if featureVector == nil {
-                print("❌ 無法從任何可能的輸出名稱獲取特徵")
+                print("❌ Unable to get features from any possible output names")
                 return nil
             }
             
             return featureVector
             
         } catch {
-            print("❌ 特徵提取失敗：\(error.localizedDescription)")
-            print("錯誤詳情：\(error)")
+            print("❌ Feature extraction failed: \(error.localizedDescription)")
+            print("Error details: \(error)")
             return nil
         }
     }
 
     func cosineSimilarity(_ vectorA: [Float], _ vectorB: [Float]) -> Float {
         guard vectorA.count == vectorB.count else {
-            print("特徵向量長度不匹配：vectorA 長度 \(vectorA.count)，vectorB 長度 \(vectorB.count)")
+            print("Feature vector length mismatch: vectorA length \(vectorA.count), vectorB length \(vectorB.count)")
             return 0.0
         }
-        let dotProduct = zip(vectorA, vectorB).map(*).reduce(0, +)
-        let magnitudeA = sqrt(vectorA.map { $0 * $0 }.reduce(0, +))
-        let magnitudeB = sqrt(vectorB.map { $0 * $0 }.reduce(0, +))
-        guard magnitudeA != 0, magnitudeB != 0 else {
-            print("特徵向量幅度為 0：magnitudeA \(magnitudeA)，magnitudeB \(magnitudeB)")
-            return 0.0
+        
+        // Normalize vectors
+        let normalizeVector = { (vector: [Float]) -> [Float] in
+            let magnitude = sqrt(vector.map { $0 * $0 }.reduce(0, +))
+            guard magnitude != 0 else { return vector }
+            return vector.map { $0 / magnitude }
         }
-        return dotProduct / (magnitudeA * magnitudeB)
+        
+        let normA = normalizeVector(vectorA)
+        let normB = normalizeVector(vectorB)
+        
+        // Calculate cosine similarity
+        let dotProduct = zip(normA, normB).map(*).reduce(0, +)
+        
+        // Add additional similarity checks
+        let euclideanDistance = sqrt(zip(normA, normB).map { pow($0.0 - $0.1, 2) }.reduce(0, +))
+        let euclideanSimilarity = 1.0 / (1.0 + euclideanDistance)
+        
+        // Combine cosine similarity and Euclidean distance similarity
+        let combinedSimilarity = (dotProduct + euclideanSimilarity) / 2.0
+        
+        // Add additional validation steps
+        let manhattanDistance = zip(normA, normB).map { abs($0.0 - $0.1) }.reduce(0, +)
+        let manhattanSimilarity = 1.0 / (1.0 + manhattanDistance)
+        
+        // Final similarity is weighted average of three similarities
+        return (combinedSimilarity * 0.5 + manhattanSimilarity * 0.5)
     }
 
     @objc func openSanctuaryWebsite() {
         selection.selectionChanged()
         if let url = URL(string: "https://www.thedonkeysanctuary.org.uk") {
             UIApplication.shared.open(url)
+        }
+    }
+
+    private func setupHintLabelAndButton() {
+        view.addSubview(hintLabel)
+        view.addSubview(identifyButton)
+        
+        hintLabel.translatesAutoresizingMaskIntoConstraints = false
+        identifyButton.translatesAutoresizingMaskIntoConstraints = false
+        
+        NSLayoutConstraint.activate([
+            hintLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            hintLabel.bottomAnchor.constraint(equalTo: toolBar.topAnchor, constant: -20),
+            hintLabel.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -40),
+            hintLabel.heightAnchor.constraint(equalToConstant: 40),
+            
+            identifyButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            identifyButton.bottomAnchor.constraint(equalTo: toolBar.topAnchor, constant: -20),
+            identifyButton.widthAnchor.constraint(equalToConstant: 200),
+            identifyButton.heightAnchor.constraint(equalToConstant: 40)
+        ])
+    }
+    
+    private func setupResultLabels() {
+        view.addSubview(resultStackView)
+        resultStackView.translatesAutoresizingMaskIntoConstraints = false
+        
+        // 設置約束
+        NSLayoutConstraint.activate([
+            resultStackView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            resultStackView.topAnchor.constraint(equalTo: labelName.bottomAnchor, constant: 20),
+            resultStackView.widthAnchor.constraint(equalToConstant: 200)
+        ])
+        
+        // 添加標籤到堆疊視圖
+        resultLabels.forEach { resultStackView.addArrangedSubview($0) }
+    }
+
+    @objc private func identifyButtonTapped() {
+        guard !isProcessing else { return }
+        isProcessing = true
+        continuousResults.removeAll()
+        
+        // 隱藏結果標籤
+        resultStackView.isHidden = true
+        
+        // Show loading indicator
+        activityIndicator.startAnimating()
+        labelName.text = "Identifying..."
+        
+        // 開始識別過程
+        processFrame()
+    }
+    
+    private func processFrame() {
+        guard let currentBuffer = currentBuffer,
+              let bbox = currentDonkeyBoundingBox else {
+            finishProcessing()
+            return
+        }
+        
+        // Process current frame
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            
+            let startTime = CACurrentMediaTime()
+            
+            // Process frame once but perform multiple feature matches
+            let ciImage = CIImage(cvPixelBuffer: currentBuffer)
+            guard let croppedBuffer = self.preprocessImage(ciImage, bbox: bbox),
+                  let feature = self.extractFeatures(from: croppedBuffer) else {
+                self.finishProcessing()
+                return
+            }
+            
+            // Use parallel processing to speed up feature matching
+            let group = DispatchGroup()
+            let queue = DispatchQueue(label: "com.donkeyrecognition.featurematching", attributes: .concurrent)
+            let chunkCount = 16
+            let chunkSize = self.features.count / chunkCount
+            var allMatches: [(name: String, score: Float)] = []
+            let semaphore = DispatchSemaphore(value: 1)
+            
+            for chunk in 0..<chunkCount {
+                group.enter()
+                queue.async {
+                    let start = chunk * chunkSize
+                    let end = chunk == chunkCount - 1 ? self.features.count : (chunk + 1) * chunkSize
+                    
+                    var localMatches: [(name: String, score: Float)] = []
+                    
+                    for index in start..<end {
+                        let score = self.cosineSimilarity(feature, self.features[index])
+                        if score > 0.05 {
+                            let donkeyName = String(self.labels[index].split(separator: "_").first ?? "Donkey")
+                            localMatches.append((name: donkeyName, score: score))
+                        }
+                    }
+                    
+                    semaphore.wait()
+                    allMatches.append(contentsOf: localMatches)
+                    semaphore.signal()
+                    
+                    group.leave()
+                }
+            }
+            
+            group.wait()
+            
+            // Sort and group all matches
+            var resultCounts: [String: (count: Int, maxScore: Float, totalScore: Float, minScore: Float)] = [:]
+            for match in allMatches {
+                if let existing = resultCounts[match.name] {
+                    resultCounts[match.name] = (
+                        count: existing.count + 1,
+                        maxScore: max(existing.maxScore, match.score),
+                        totalScore: existing.totalScore + match.score,
+                        minScore: min(existing.minScore, match.score)
+                    )
+                } else {
+                    resultCounts[match.name] = (count: 1, maxScore: match.score, totalScore: match.score, minScore: match.score)
+                }
+            }
+            
+            // Get top 3 results
+            let topResults = resultCounts.sorted { a, b in
+                let scoreA = (a.value.maxScore * 0.4 + a.value.totalScore / Float(a.value.count) * 0.4 + a.value.minScore * 0.2)
+                let scoreB = (b.value.maxScore * 0.4 + b.value.totalScore / Float(b.value.count) * 0.4 + b.value.minScore * 0.2)
+                return scoreA > scoreB
+            }.prefix(3)
+            
+            let endTime = CACurrentMediaTime()
+            print("\nTotal processing time: \((endTime - startTime) * 1000)ms")
+            
+            // Update UI
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.activityIndicator.stopAnimating()
+                
+                // Update top 3 results display
+                self.resultStackView.isHidden = false
+                for (index, result) in topResults.enumerated() {
+                    let donkeyName = result.key
+                    let maxScore = result.value.maxScore
+                    let count = result.value.count
+                    
+                    // Calculate normalized confidence score (0-100%)
+                    let normalizedScore = min(maxScore * 100, 100)
+                    
+                    self.resultLabels[index].text = String(format: "%d. %@ (%.1f%%)", 
+                        index + 1, 
+                        donkeyName, 
+                        normalizedScore)
+                }
+                
+                // Clear remaining labels
+                for index in topResults.count..<self.resultLabels.count {
+                    self.resultLabels[index].text = ""
+                }
+                
+                self.isProcessing = false
+                self.labelName.text = "Ask ELVIS"
+            }
+        }
+    }
+    
+    private func finishProcessing() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.isProcessing = false
+            self.activityIndicator.stopAnimating()
+            self.labelName.text = "Ask ELVIS"
         }
     }
 }
