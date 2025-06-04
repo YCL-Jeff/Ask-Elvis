@@ -122,6 +122,19 @@ class ViewController: UIViewController {
         setUpOrientationChangeNotification()
         startVideo()
         setModel()
+        
+        // 設定 toolbar 高度
+        toolBar.frame.size.height = 49
+        
+        // 新增驢子保護區網站按鈕到最右側
+        let sanctuaryButton = UIBarButtonItem(image: UIImage(systemName: "globe"), style: .plain, target: self, action: #selector(openSanctuaryWebsite))
+        toolBar.items?.append(UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil))
+        toolBar.items?.append(sanctuaryButton)
+        
+        // 移除分享按鈕
+        if let items = toolBar.items {
+            toolBar.items = items.filter { $0.action != #selector(shareButton(_:)) }
+        }
 
         // 異步載入特徵庫
         DispatchQueue.global(qos: .userInitiated).async {
@@ -228,7 +241,7 @@ class ViewController: UIViewController {
     }
 
     func setLabels() {
-        self.labelName?.text = "Ask Elvis"
+        self.labelName?.text = "Ask ELVIS"
         self.labelVersion?.text = "Version " + (UserDefaults.standard.string(forKey: "app_version") ?? "Unknown")
     }
 
@@ -821,6 +834,13 @@ class ViewController: UIViewController {
             return 0.0
         }
         return dotProduct / (magnitudeA * magnitudeB)
+    }
+
+    @objc func openSanctuaryWebsite() {
+        selection.selectionChanged()
+        if let url = URL(string: "https://www.thedonkeysanctuary.org.uk") {
+            UIApplication.shared.open(url)
+        }
     }
 }
 
