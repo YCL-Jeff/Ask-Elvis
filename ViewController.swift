@@ -5,6 +5,7 @@ import UIKit
 import Vision
 import CoreImage
 import SafariServices  // 添加 SafariServices 框架
+import MediaPlayer
 
 // YOLO model
 var mlModel: MLModel = {
@@ -170,6 +171,15 @@ class ViewController: UIViewController {
     // 添加 hintContainer 屬性
     private var hintContainer: UIView?
 
+    private var isPaused = false
+    private var lastCapturedImage: UIImage?
+    private var lastDetectionResult: DetectionResult?
+    private var nextPhotoButton: UIButton?
+
+    // 添加靜態屬性用於防重複觸發
+    private static var lastVolumeChangeTime: TimeInterval = 0
+    private static var lastCameraButtonPressTime: TimeInterval = 0
+
     override func viewDidLoad() {
         super.viewDidLoad()
         // 設置 UserDefaults 中的 app_version（如果未設置）
@@ -188,6 +198,9 @@ class ViewController: UIViewController {
         // 確保 hintContainer 初始顯示
         self.hintContainer?.isHidden = false
         self.identifyButton.isHidden = true
+        
+        // 設置音量鍵監聽
+        setupVolumeButtonMonitoring()
         
         // Set toolbar height and style
         toolBar.frame.size.height = 49  // 標準工具列高度
@@ -303,6 +316,17 @@ class ViewController: UIViewController {
         }
 
         setupResultLabels()
+        
+        // 設置 Next Photo 按鈕
+        setupNextPhotoButton()
+        
+        // 設置音頻會話
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            print("設置音頻會話失敗：\(error.localizedDescription)")
+        }
     }
 
     override func viewWillTransition(to size: CGSize, with coordinator: any UIViewControllerTransitionCoordinator) {
@@ -364,6 +388,7 @@ class ViewController: UIViewController {
     @IBAction func playButton(_ sender: Any) {
         selection.selectionChanged()
         self.videoCapture.start()
+        isPaused = false
         playButtonOutlet?.isEnabled = false
         pauseButtonOutlet?.isEnabled = true
     }
@@ -371,6 +396,7 @@ class ViewController: UIViewController {
     @IBAction func pauseButton(_ sender: Any?) {
         selection.selectionChanged()
         self.videoCapture.stop()
+        isPaused = true
         playButtonOutlet?.isEnabled = true
         pauseButtonOutlet?.isEnabled = false
     }
@@ -386,7 +412,9 @@ class ViewController: UIViewController {
 
     func setUpBoundingBoxViews() {
         while boundingBoxViews.count < maxBoundingBoxViews {
-            boundingBoxViews.append(BoundingBoxView())
+            let box = BoundingBoxView()
+            box.addToLayer(videoPreview?.layer ?? CALayer())
+            boundingBoxViews.append(box)
         }
     }
 
@@ -464,6 +492,11 @@ class ViewController: UIViewController {
                 print("❌ 請求錯誤：\(error.localizedDescription)")
             }
             
+            // 如果正在處理下一張照片，不要更新邊界框
+            if self.isPaused {
+                return
+            }
+            
             if let results = request.results as? [VNRecognizedObjectObservation] {
                 // 過濾出信心度大於 40% 的驢子檢測結果
                 let donkeyResults = results.filter { observation in
@@ -493,8 +526,11 @@ class ViewController: UIViewController {
                     // 保存第一個驢子的邊界框用於特徵提取
                     self.currentDonkeyBoundingBox = donkeyResults.first?.boundingBox
                 } else {
-                    self.currentDonkeyBoundingBox = nil
-                    self.show(predictions: [])
+                    // 只有在非暫停狀態下才清除邊界框
+                    if !self.isPaused {
+                        self.currentDonkeyBoundingBox = nil
+                        self.show(predictions: [])
+                    }
                 }
             } else {
                 self.hasDetectedDonkey = false
@@ -503,15 +539,28 @@ class ViewController: UIViewController {
                 self.hintContainer?.isHidden = false
                 self.identifyButton.isHidden = true
                 
-                self.currentDonkeyBoundingBox = nil
-                self.show(predictions: [])
+                // 只有在非暫停狀態下才清除邊界框
+                if !self.isPaused {
+                    self.currentDonkeyBoundingBox = nil
+                    self.show(predictions: [])
+                }
             }
         }
     }
 
     func show(predictions: [DetectionResult]) {
+        // 如果正在處理下一張照片，不要更新邊界框
+        if isPaused {
+            return
+        }
+
         let width = videoPreview?.bounds.width ?? 0
         let height = videoPreview?.bounds.height ?? 0
+
+        // 確保所有邊界框都在正確的層級
+        for box in boundingBoxViews {
+            box.addToLayer(videoPreview?.layer ?? CALayer())
+        }
 
         if UIDevice.current.orientation == .portrait {
             var ratio: CGFloat = 1.0
@@ -579,7 +628,10 @@ class ViewController: UIViewController {
                         self.hintContainer?.isHidden = true
                     }
                 } else {
-                    boundingBoxViews[i].hide()
+                    // 只有在非暫停狀態下才隱藏邊界框
+                    if !isPaused {
+                        boundingBoxViews[i].hide()
+                    }
                 }
             }
         } else {
@@ -628,7 +680,10 @@ class ViewController: UIViewController {
                         boundingBoxViews[i].show(frame: rect, label: label, color: UIColor.green)
                     }
                 } else {
-                    boundingBoxViews[i].hide()
+                    // 只有在非暫停狀態下才隱藏邊界框
+                    if !isPaused {
+                        boundingBoxViews[i].hide()
+                    }
                 }
             }
         }
@@ -959,17 +1014,62 @@ class ViewController: UIViewController {
     @IBAction func identifyButtonTapped(_ sender: Any) {
         guard !isProcessing else { return }
         isProcessing = true
-        continuousResults.removeAll()
-        
-        // 隱藏結果標籤
-        resultStackView.isHidden = true
         
         // Show loading indicator
         activityIndicator.startAnimating()
         labelName.text = "Identifying..."
         
+        // 暫停視訊捕捉
+        videoCapture.stop()
+        isPaused = true
+        
         // 開始識別過程
         processFrame()
+    }
+    
+    private func showPausedFrame() {
+        guard let image = lastCapturedImage,
+              let result = lastDetectionResult else { return }
+        
+        // 創建一個新的圖像上下文
+        let renderer = UIGraphicsImageRenderer(size: image.size)
+        
+        let finalImage = renderer.image { context in
+            // 繪製原始照片
+            image.draw(in: CGRect(origin: .zero, size: image.size))
+        }
+        
+        // 更新視圖
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            
+            // 移除所有現有的圖層（除了預覽層和 bounding box）
+            if let sublayers = self.videoPreview?.layer.sublayers {
+                for layer in sublayers {
+                    if layer != self.videoCapture.previewLayer && !(layer is BoundingBoxView) {
+                        layer.removeFromSuperlayer()
+                    }
+                }
+            }
+            
+            let imageView = UIImageView(image: finalImage)
+            imageView.contentMode = .scaleAspectFill
+            imageView.frame = self.videoPreview?.frame ?? CGRect.zero
+            let imageLayer = imageView.layer
+            self.videoPreview?.layer.insertSublayer(imageLayer, above: self.videoCapture.previewLayer)
+            
+            // 確保 bounding box 顯示在最上層
+            if let bbox = self.currentDonkeyBoundingBox {
+                let width = self.videoPreview?.bounds.width ?? 0
+                let height = self.videoPreview?.bounds.height ?? 0
+                let rect = VNImageRectForNormalizedRect(bbox, Int(width), Int(height))
+                let label = String(format: "%@ %.1f%%", self.currentDonkeyName ?? "Donkey", result.confidence * 100)
+                
+                // 重新添加 bounding box 到視圖層級
+                self.boundingBoxViews[0].addToLayer(self.videoPreview?.layer ?? CALayer())
+                self.boundingBoxViews[0].show(frame: rect, label: label, color: UIColor.green)
+            }
+        }
     }
     
     private func processFrame() {
@@ -987,6 +1087,7 @@ class ViewController: UIViewController {
             return
         }
         let capturedImage = UIImage(cgImage: cgImage)
+        lastCapturedImage = capturedImage
         
         // Process current frame
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -1068,39 +1169,21 @@ class ViewController: UIViewController {
                 guard let self = self else { return }
                 self.activityIndicator.stopAnimating()
                 
-                // Update top 3 results display
-                self.resultStackView.isHidden = false
-                for (index, result) in topResults.enumerated() {
-                    let donkeyName = result.key
-                    let maxScore = result.value.maxScore
-                    
-                    // Calculate normalized confidence score (0-100%)
-                    let normalizedScore = min(maxScore * 100, 100)
-                    
-                    self.resultLabels[index].text = String(format: "%d. %@ (%.1f%%)", 
-                        index + 1, 
-                        donkeyName, 
-                        normalizedScore)
-                    
-                    // 更新當前識別出的驢子名稱（取最高分的那個）
-                    if index == 0 {
-                        self.currentDonkeyName = donkeyName
-                    }
-                }
-                
-                // Clear remaining labels
-                for index in topResults.count..<self.resultLabels.count {
-                    self.resultLabels[index].text = ""
+                // 更新當前識別出的驢子名稱（取最高分的那個）
+                if let topResult = topResults.first {
+                    self.currentDonkeyName = topResult.key
+                    // 保存最後的檢測結果
+                    self.lastDetectionResult = DetectionResult(
+                        boundingBox: bbox,
+                        name: topResult.key,
+                        confidence: topResult.value.maxScore
+                    )
                 }
                 
                 // 添加兩次快速震動的觸覺反饋
                 let generator = UIImpactFeedbackGenerator(style: .medium)
-                generator.prepare()  // 預先準備震動器以減少延遲
-                
-                // 第一次震動
+                generator.prepare()
                 generator.impactOccurred()
-                
-                // 延遲 0.1 秒後進行第二次震動
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     generator.impactOccurred()
                 }
@@ -1108,14 +1191,51 @@ class ViewController: UIViewController {
                 // 保存結果和照片
                 self.saveResultAndPhoto(capturedImage: capturedImage, results: Array(topResults))
                 
-                // 10秒後自動清除結果
+                // 顯示暫停畫面
+                self.showPausedFrame()
+                
+                // 保持顯示 bounding box
+                if let bbox = self.currentDonkeyBoundingBox {
+                    let width = self.videoPreview?.bounds.width ?? 0
+                    let height = self.videoPreview?.bounds.height ?? 0
+                    let rect = VNImageRectForNormalizedRect(bbox, Int(width), Int(height))
+                    let label = String(format: "%@ %.1f%%", self.currentDonkeyName ?? "Donkey", (topResults.first?.value.maxScore ?? 0) * 100)
+                    self.boundingBoxViews[0].show(frame: rect, label: label, color: UIColor.green)
+                }
+                
+                // 隱藏 identify 按鈕，顯示 Next Photo 按鈕
+                self.identifyButton.isHidden = true
+                self.nextPhotoButton?.isHidden = false
+                
+                // 10秒後自動清除結果並恢復視訊捕捉
                 DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) { [weak self] in
                     guard let self = self else { return }
-                    self.resultStackView.isHidden = true
-                    for label in self.resultLabels {
-                        label.text = ""
-                    }
+                    
+                    // 清除當前結果
                     self.currentDonkeyName = nil
+                    self.lastCapturedImage = nil
+                    self.lastDetectionResult = nil
+                    self.isPaused = false
+                    
+                    // 隱藏 Next Photo 按鈕
+                    self.nextPhotoButton?.isHidden = true
+                    
+                    // 顯示 identify 按鈕
+                    self.identifyButton.isHidden = false
+                    
+                    // 移除所有現有的圖層（除了預覽層和 bounding box）
+                    if let sublayers = self.videoPreview?.layer.sublayers {
+                        for layer in sublayers {
+                            if layer != self.videoCapture.previewLayer && !(layer is BoundingBoxView) {
+                                layer.removeFromSuperlayer()
+                            }
+                        }
+                    }
+                    
+                    // 恢復視訊捕捉
+                    self.videoCapture.start()
+                    self.playButtonOutlet?.isEnabled = false
+                    self.pauseButtonOutlet?.isEnabled = true
                 }
                 
                 self.isProcessing = false
@@ -1142,30 +1262,72 @@ class ViewController: UIViewController {
                 .paragraphStyle: paragraphStyle
             ]
             
-            // 繪製結果文字
-            var yOffset: CGFloat = 50
-            for (index, result) in results.enumerated() {
-                let donkeyName = result.key
-                let maxScore = result.value.maxScore
-                let normalizedScore = min(maxScore * 100, 100)
+            // 如果有識別結果，在 YOLO 外框上顯示名稱
+            if let bbox = currentDonkeyBoundingBox {
+                // 計算外框在圖片上的實際位置
+                let imageSize = capturedImage.size
+                let boxRect = CGRect(
+                    x: bbox.origin.x * imageSize.width,
+                    y: bbox.origin.y * imageSize.height,
+                    width: bbox.width * imageSize.width,
+                    height: bbox.height * imageSize.height
+                )
                 
-                let text = String(format: "%d. %@ (%.1f%%)", index + 1, donkeyName, normalizedScore)
-                let textRect = CGRect(x: 20, y: yOffset, width: capturedImage.size.width - 40, height: 30)
+                // 繪製外框
+                context.cgContext.setStrokeColor(UIColor.green.cgColor)
+                context.cgContext.setLineWidth(4.0)
+                context.cgContext.stroke(boxRect)
                 
-                // 添加文字背景
-                let backgroundRect = CGRect(x: textRect.minX - 10, y: textRect.minY - 5,
-                                          width: textRect.width + 20, height: textRect.height + 10)
-                context.cgContext.setFillColor(UIColor.black.withAlphaComponent(0.6).cgColor)
-                context.cgContext.fill(backgroundRect)
-                
-                // 繪製文字
-                text.draw(in: textRect, withAttributes: attributes)
-                yOffset += 40
+                // 準備顯示名稱
+                if let topResult = results.first {
+                    let donkeyName = topResult.key
+                    let maxScore = topResult.value.maxScore
+                    let normalizedScore = min(maxScore * 100, 100)
+                    let labelText = String(format: "%@ (%.1f%%)", donkeyName, normalizedScore)
+                    
+                    // 計算文字背景區域
+                    let textSize = (labelText as NSString).size(withAttributes: attributes)
+                    let textRect = CGRect(
+                        x: boxRect.minX,
+                        y: boxRect.minY - textSize.height - 4,
+                        width: textSize.width + 16,
+                        height: textSize.height + 8
+                    )
+                    
+                    // 繪製文字背景（使用與框線相同的顏色，但半透明）
+                    context.cgContext.setFillColor(UIColor.green.withAlphaComponent(0.6).cgColor)
+                    context.cgContext.fill(textRect)
+                    
+                    // 繪製文字背景邊框
+                    context.cgContext.setStrokeColor(UIColor.green.cgColor)
+                    context.cgContext.setLineWidth(2.0)
+                    context.cgContext.stroke(textRect)
+                    
+                    // 繪製文字
+                    labelText.draw(in: CGRect(
+                        x: textRect.minX + 8,
+                        y: textRect.minY + 4,
+                        width: textSize.width,
+                        height: textSize.height
+                    ), withAttributes: attributes)
+                }
             }
         }
         
         // 保存到相簿
         UIImageWriteToSavedPhotosAlbum(finalImage, self, #selector(image(_:didFinishSavingWithError:contextInfo:)), nil)
+        
+        // 確保 bounding box 在保存後仍然顯示
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self,
+                  let bbox = self.currentDonkeyBoundingBox else { return }
+            
+            let width = self.videoPreview?.bounds.width ?? 0
+            let height = self.videoPreview?.bounds.height ?? 0
+            let rect = VNImageRectForNormalizedRect(bbox, Int(width), Int(height))
+            let label = String(format: "%@ %.1f%%", self.currentDonkeyName ?? "Donkey", (results.first?.value.maxScore ?? 0) * 100)
+            self.boundingBoxViews[0].show(frame: rect, label: label, color: UIColor.green)
+        }
     }
     
     private func finishProcessing() {
@@ -1174,6 +1336,10 @@ class ViewController: UIViewController {
             self.isProcessing = false
             self.activityIndicator.stopAnimating()
             self.labelName.text = "Ask ELVIS"
+            self.isPaused = false
+            self.videoCapture.start()
+            self.playButtonOutlet?.isEnabled = false
+            self.pauseButtonOutlet?.isEnabled = true
         }
     }
 
@@ -1213,7 +1379,7 @@ class ViewController: UIViewController {
         identifyButton.layer.masksToBounds = true
         
         // 設置按鈕文字顏色和字體大小
-        identifyButton.setTitleColor(.black, for: .normal)
+        identifyButton.setTitleColor(.systemBlue, for: .normal)  // 使用 Apple 標準藍色
         identifyButton.titleLabel?.font = .systemFont(ofSize: 18, weight: .semibold)  // 按鈕文字加粗
         identifyButton.titleLabel?.textAlignment = .center
         
@@ -1328,8 +1494,14 @@ class ViewController: UIViewController {
     
     @objc private func buttonTouchDown() {
         UIView.animate(withDuration: 0.1) {
-            self.identifyButton.transform = CGAffineTransform(scaleX: 0.95, y: 0.95)  // 按鈕按下時縮放更明顯
-            self.identifyButton.alpha = 0.8  // 按鈕按下時透明度變化更明顯
+            if let button = self.nextPhotoButton, !button.isHidden {
+                button.transform = CGAffineTransform(scaleX: 0.95, y: 0.95)
+                button.alpha = 0.8
+            }
+            if !self.identifyButton.isHidden {
+                self.identifyButton.transform = CGAffineTransform(scaleX: 0.95, y: 0.95)
+                self.identifyButton.alpha = 0.8
+            }
         }
         // 添加觸覺反饋
         let generator = UIImpactFeedbackGenerator(style: .medium)
@@ -1338,14 +1510,195 @@ class ViewController: UIViewController {
     
     @objc private func buttonTouchUp() {
         UIView.animate(withDuration: 0.1) {
-            self.identifyButton.transform = .identity
-            self.identifyButton.alpha = 1.0
+            if let button = self.nextPhotoButton, !button.isHidden {
+                button.transform = .identity
+                button.alpha = 1.0
+            }
+            if !self.identifyButton.isHidden {
+                self.identifyButton.transform = .identity
+                self.identifyButton.alpha = 1.0
+            }
         }
+    }
+
+    private func setupNextPhotoButton() {
+        // 創建 Next Photo 按鈕
+        let button = UIButton(type: .system)
+        button.setTitle("Next Photo", for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 18, weight: .semibold)
+        button.setTitleColor(.black, for: .normal)
+        button.backgroundColor = .clear
+        button.layer.cornerRadius = 16
+        button.layer.masksToBounds = true
+        button.isHidden = true
+        
+        // 設置按鈕的玻璃效果
+        let buttonBlurEffect = UIBlurEffect(style: .systemUltraThinMaterial)
+        let buttonBlurView = UIVisualEffectView(effect: buttonBlurEffect)
+        buttonBlurView.frame = button.bounds
+        buttonBlurView.isUserInteractionEnabled = false
+        buttonBlurView.alpha = 0.9
+        buttonBlurView.layer.cornerRadius = 16
+        buttonBlurView.clipsToBounds = true
+        button.insertSubview(buttonBlurView, at: 0)
+        
+        // 添加邊框
+        let borderLayer = CALayer()
+        borderLayer.frame = button.bounds
+        borderLayer.cornerRadius = 16
+        borderLayer.borderWidth = 2.0
+        borderLayer.borderColor = UIColor(white: 1.0, alpha: 0.5).cgColor
+        button.layer.addSublayer(borderLayer)
+        
+        // 添加點擊事件
+        button.addTarget(self, action: #selector(nextPhotoButtonTapped), for: .touchUpInside)
+        button.addTarget(self, action: #selector(buttonTouchDown), for: .touchDown)
+        button.addTarget(self, action: #selector(buttonTouchUp), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        
+        // 添加到視圖
+        view.addSubview(button)
+        
+        // 設置約束
+        button.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            button.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            button.bottomAnchor.constraint(equalTo: labelVersion.topAnchor, constant: -20),
+            button.widthAnchor.constraint(equalToConstant: 300),
+            button.heightAnchor.constraint(equalToConstant: 60)
+        ])
+        
+        // 確保按鈕文字在按鈕內
+        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
+        button.titleLabel?.adjustsFontSizeToFitWidth = true
+        button.titleLabel?.minimumScaleFactor = 0.5
+        
+        // 確保按鈕背景層正確更新
+        button.layoutIfNeeded()
+        buttonBlurView.frame = button.bounds
+        borderLayer.frame = button.bounds
+        
+        // 保存按鈕引用
+        self.nextPhotoButton = button
+    }
+    
+    @objc private func nextPhotoButtonTapped() {
+        // 保存當前的邊界框位置和狀態
+        let savedBoundingBox = currentDonkeyBoundingBox
+        let savedHasDetectedDonkey = hasDetectedDonkey
+        
+        // 清除當前結果
+        currentDonkeyName = nil
+        lastCapturedImage = nil
+        lastDetectionResult = nil
+        
+        // 隱藏 Next Photo 按鈕
+        nextPhotoButton?.isHidden = true
+        
+        // 顯示 identify 按鈕
+        identifyButton.isHidden = false
+        
+        // 移除所有現有的圖層（除了預覽層和 bounding box）
+        if let sublayers = videoPreview?.layer.sublayers {
+            for layer in sublayers {
+                if layer != videoCapture.previewLayer && !(layer is BoundingBoxView) {
+                    layer.removeFromSuperlayer()
+                }
+            }
+        }
+        
+        // 恢復視訊捕捉
+        videoCapture.start()
+        playButtonOutlet?.isEnabled = false
+        pauseButtonOutlet?.isEnabled = true
+        
+        // 確保邊界框繼續顯示
+        if let bbox = savedBoundingBox {
+            let width = videoPreview?.bounds.width ?? 0
+            let height = videoPreview?.bounds.height ?? 0
+            let rect = VNImageRectForNormalizedRect(bbox, Int(width), Int(height))
+            let label = String(format: "%@ %.1f%%", "Donkey", 0.0)
+            
+            // 重新添加邊界框到視圖層級
+            boundingBoxViews[0].addToLayer(videoPreview?.layer ?? CALayer())
+            boundingBoxViews[0].show(frame: rect, label: label, color: UIColor.green)
+            
+            // 恢復邊界框位置和狀態
+            currentDonkeyBoundingBox = bbox
+            hasDetectedDonkey = savedHasDetectedDonkey
+        }
+        
+        // 延遲設置 isPaused 為 false，確保邊界框已經顯示
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.isPaused = false
+        }
+    }
+
+    // 添加音量鍵監聽
+    private func setupVolumeButtonMonitoring() {
+        // 創建一個隱藏的 MPVolumeView 來監聽音量變化
+        let volumeView = MPVolumeView()
+        volumeView.frame = CGRect(x: -1000, y: -1000, width: 1, height: 1)
+        view.addSubview(volumeView)
+        
+        // 獲取音量滑塊
+        if let slider = volumeView.subviews.first(where: { $0 is UISlider }) as? UISlider {
+            // 保存初始音量值
+            let initialVolume = AVAudioSession.sharedInstance().outputVolume
+            slider.addTarget(self, action: #selector(volumeSliderChanged(_:)), for: .valueChanged)
+        }
+    }
+    
+    @objc private func volumeSliderChanged(_ slider: UISlider) {
+        // 檢查是否正在處理中
+        guard !isProcessing else { return }
+        
+        // 檢查是否有檢測到驢子
+        guard hasDetectedDonkey else { return }
+        
+        // 防止重複觸發
+        let currentTime = CACurrentMediaTime()
+        guard currentTime - Self.lastVolumeChangeTime > 0.5 else { return }
+        Self.lastVolumeChangeTime = currentTime
+        
+        // 觸發識別
+        identifyButtonTapped(self)
+    }
+    
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        
+        // 設置音頻會話
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            print("設置音頻會話失敗：\(error.localizedDescription)")
+        }
+    }
+    
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        
+        // 停止音頻會話
+        do {
+            try AVAudioSession.sharedInstance().setActive(false)
+        } catch {
+            print("停止音頻會話失敗：\(error.localizedDescription)")
+        }
+    }
+
+    deinit {
+        // 移除通知觀察者
+        NotificationCenter.default.removeObserver(self)
     }
 }
 
 extension ViewController: VideoCaptureDelegate {
     func videoCapture(_ capture: VideoCapture, didCaptureVideoFrame sampleBuffer: CMSampleBuffer) {
+        // 如果正在處理下一張照片，不要進行預測
+        if isPaused {
+            return
+        }
         predict(sampleBuffer: sampleBuffer)
     }
 }
