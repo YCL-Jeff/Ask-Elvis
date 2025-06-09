@@ -24,6 +24,16 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    // 創建並設置主視窗
+    window = UIWindow(frame: UIScreen.main.bounds)
+    
+    // 創建主視圖控制器
+    let storyboard = UIStoryboard(name: "Main", bundle: nil)
+    if let viewController = storyboard.instantiateInitialViewController() {
+      window?.rootViewController = viewController
+      window?.makeKeyAndVisible()
+    }
+
     // Disable screen dimming and auto-lock to keep the app active during long operations.
     UIApplication.shared.isIdleTimerDisabled = true
 

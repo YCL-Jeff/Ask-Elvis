@@ -4,6 +4,7 @@ import CoreMedia
 import UIKit
 import Vision
 import CoreImage
+import SafariServices  // 添加 SafariServices 框架
 
 // YOLO model
 var mlModel: MLModel = {
@@ -74,6 +75,7 @@ class ViewController: UIViewController {
     @IBOutlet weak var activityIndicator: UIActivityIndicatorView!
     @IBOutlet weak var focus: UIImageView!
     @IBOutlet weak var toolBar: UIToolbar!
+    @IBOutlet weak var identifyButton: UIButton!
 
     // Add status label
     private lazy var statusLabel: UILabel = {
@@ -131,29 +133,6 @@ class ViewController: UIViewController {
     private var currentDonkeyBoundingBox: CGRect?
     private var currentDonkeyName: String?  // Store the currently recognized donkey name
     
-    private lazy var hintLabel: UILabel = {
-        let label = UILabel()
-        label.text = "Point camera at donkey"
-        label.textColor = .white
-        label.textAlignment = .center
-        label.font = .systemFont(ofSize: 15)  // 調整為標準正文大小
-        label.backgroundColor = UIColor.black.withAlphaComponent(0.6)
-        label.layer.cornerRadius = 8
-        label.clipsToBounds = true
-        return label
-    }()
-    
-    private lazy var identifyButton: UIButton = {
-        let button = UIButton(type: .system)
-        button.setTitle("Identify Donkey", for: .normal)
-        button.setTitleColor(.white, for: .normal)
-        button.backgroundColor = .systemBlue
-        button.layer.cornerRadius = 8
-        button.addTarget(self, action: #selector(identifyButtonTapped), for: .touchUpInside)
-        button.isHidden = true
-        return button
-    }()
-
     let selection = UISelectionFeedbackGenerator()
     var detector = try! VNCoreMLModel(for: mlModel)
     var session: AVCaptureSession!
@@ -188,6 +167,9 @@ class ViewController: UIViewController {
     private var featureCache: [String: [Float]] = [:]
     private let cacheQueue = DispatchQueue(label: "com.donkeyrecognition.featurecache")
 
+    // 添加 hintContainer 屬性
+    private var hintContainer: UIView?
+
     override func viewDidLoad() {
         super.viewDidLoad()
         // 設置 UserDefaults 中的 app_version（如果未設置）
@@ -199,6 +181,13 @@ class ViewController: UIViewController {
         setUpOrientationChangeNotification()
         startVideo()
         setModel()
+        
+        // 設置 identifyButton
+        setupIdentifyButton()
+        
+        // 確保 hintContainer 初始顯示
+        self.hintContainer?.isHidden = false
+        self.identifyButton.isHidden = true
         
         // Set toolbar height and style
         toolBar.frame.size.height = 49  // 標準工具列高度
@@ -313,7 +302,6 @@ class ViewController: UIViewController {
             }
         }
 
-        setupHintLabelAndButton()
         setupResultLabels()
     }
 
@@ -477,13 +465,18 @@ class ViewController: UIViewController {
             }
             
             if let results = request.results as? [VNRecognizedObjectObservation] {
+                // 過濾出信心度大於 40% 的驢子檢測結果
                 let donkeyResults = results.filter { observation in
-                    observation.labels.contains { $0.identifier == self.donkeyClassLabel }
+                    observation.labels.contains { label in
+                        label.identifier == self.donkeyClassLabel && label.confidence > 0.4
+                    }
                 }
                 
                 // 更新 UI 狀態
                 self.hasDetectedDonkey = !donkeyResults.isEmpty
-                self.hintLabel.isHidden = self.hasDetectedDonkey
+                
+                // 更新 hintLabel 和 identifyButton 的顯示狀態
+                self.hintContainer?.isHidden = self.hasDetectedDonkey
                 self.identifyButton.isHidden = !self.hasDetectedDonkey
                 
                 if !donkeyResults.isEmpty {
@@ -505,8 +498,11 @@ class ViewController: UIViewController {
                 }
             } else {
                 self.hasDetectedDonkey = false
-                self.hintLabel.isHidden = false
+                
+                // 更新 hintLabel 和 identifyButton 的顯示狀態
+                self.hintContainer?.isHidden = false
                 self.identifyButton.isHidden = true
+                
                 self.currentDonkeyBoundingBox = nil
                 self.show(predictions: [])
             }
@@ -567,14 +563,20 @@ class ViewController: UIViewController {
                     if areaRatio > 0.8 {  // Box too large, likely false detection
                         boundingBoxViews[i].hide()
                         self.hasDetectedDonkey = false
-                        self.hintLabel.isHidden = false
                         self.identifyButton.isHidden = true
+                        self.hintContainer?.isHidden = false
                     } else if areaRatio < 0.05 {  // Box too small, too far away
                         let label = String(format: "%@ %.1f%%", prediction.name, prediction.confidence * 100)
                         boundingBoxViews[i].show(frame: rect, label: label, color: UIColor.red)
+                        self.hasDetectedDonkey = false
+                        self.identifyButton.isHidden = true
+                        self.hintContainer?.isHidden = false
                     } else {  // Normal distance
                         let label = String(format: "%@ %.1f%%", prediction.name, prediction.confidence * 100)
                         boundingBoxViews[i].show(frame: rect, label: label, color: UIColor.green)
+                        self.hasDetectedDonkey = true
+                        self.identifyButton.isHidden = false
+                        self.hintContainer?.isHidden = true
                     }
                 } else {
                     boundingBoxViews[i].hide()
@@ -617,7 +619,6 @@ class ViewController: UIViewController {
                     if areaRatio > 0.8 {  // Box too large, likely false detection
                         boundingBoxViews[i].hide()
                         self.hasDetectedDonkey = false
-                        self.hintLabel.isHidden = false
                         self.identifyButton.isHidden = true
                     } else if areaRatio < 0.05 {  // Box too small, too far away
                         let label = String(format: "%@ %.1f%%", prediction.name, prediction.confidence * 100)
@@ -886,7 +887,11 @@ class ViewController: UIViewController {
     @objc func openSanctuaryWebsite() {
         selection.selectionChanged()
         if let url = URL(string: "https://www.iowdonkeysanctuary.org") {
-            UIApplication.shared.open(url)
+            // 使用 SFSafariViewController 開啟網頁
+            let safariVC = SFSafariViewController(url: url)
+            safariVC.preferredControlTintColor = .black
+            safariVC.modalPresentationStyle = .pageSheet
+            present(safariVC, animated: true)
         }
     }
 
@@ -894,8 +899,8 @@ class ViewController: UIViewController {
         selection.selectionChanged()
         guard let donkeyName = currentDonkeyName?.lowercased() else {
             // 如果沒有識別出驢子，顯示提示
-            let alert = UIAlertController(title: "提示", message: "請先識別驢子", preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "確定", style: .default))
+            let alert = UIAlertController(title: "Notice", message: "Please identify a donkey first", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
             present(alert, animated: true)
             return
         }
@@ -903,14 +908,18 @@ class ViewController: UIViewController {
         // 根據驢子名稱構建URL
         let baseURL = "https://www.iowdonkeysanctuary.org/product/"
         if let url = URL(string: baseURL + donkeyName) {
-            UIApplication.shared.open(url)
+            // 使用 SFSafariViewController 開啟網頁
+            let safariVC = SFSafariViewController(url: url)
+            safariVC.preferredControlTintColor = .black
+            safariVC.modalPresentationStyle = .pageSheet
+            present(safariVC, animated: true)
         }
     }
 
     @objc private func saveToPhotoLibrary() {
         guard hasDetectedDonkey else {
-            let alert = UIAlertController(title: "提示", message: "請先識別驢子", preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "確定", style: .default))
+            let alert = UIAlertController(title: "Notice", message: "Please identify a donkey first", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
             present(alert, animated: true)
             return
         }
@@ -920,42 +929,18 @@ class ViewController: UIViewController {
         self.videoCapture.cameraOutput.capturePhoto(with: settings, delegate: self as AVCapturePhotoCaptureDelegate)
     }
     
-    private func saveImageToPhotoLibrary(_ image: UIImage) {
-        UIImageWriteToSavedPhotosAlbum(image, self, #selector(image(_:didFinishSavingWithError:contextInfo:)), nil)
-    }
-    
     @objc private func image(_ image: UIImage, didFinishSavingWithError error: Error?, contextInfo: UnsafeRawPointer) {
         if let error = error {
-            let alert = UIAlertController(title: "保存失敗", message: error.localizedDescription, preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "確定", style: .default))
+            let alert = UIAlertController(title: "Save Failed", message: error.localizedDescription, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
             present(alert, animated: true)
         } else {
-            let alert = UIAlertController(title: "保存成功", message: "識別結果已保存到相簿", preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "確定", style: .default))
+            let alert = UIAlertController(title: "Save Successful", message: "Recognition results have been saved to photo library", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
             present(alert, animated: true)
         }
     }
 
-    private func setupHintLabelAndButton() {
-        view.addSubview(hintLabel)
-        view.addSubview(identifyButton)
-        
-        hintLabel.translatesAutoresizingMaskIntoConstraints = false
-        identifyButton.translatesAutoresizingMaskIntoConstraints = false
-        
-        NSLayoutConstraint.activate([
-            hintLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            hintLabel.bottomAnchor.constraint(equalTo: toolBar.topAnchor, constant: -16),  // 標準邊距
-            hintLabel.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -32),  // 標準邊距
-            hintLabel.heightAnchor.constraint(equalToConstant: 44),  // 最小點擊區域
-            
-            identifyButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            identifyButton.bottomAnchor.constraint(equalTo: toolBar.topAnchor, constant: -16),  // 標準邊距
-            identifyButton.widthAnchor.constraint(equalToConstant: 200),
-            identifyButton.heightAnchor.constraint(equalToConstant: 44)  // 最小點擊區域
-        ])
-    }
-    
     private func setupResultLabels() {
         view.addSubview(resultStackView)
         resultStackView.translatesAutoresizingMaskIntoConstraints = false
@@ -971,7 +956,7 @@ class ViewController: UIViewController {
         resultLabels.forEach { resultStackView.addArrangedSubview($0) }
     }
 
-    @objc private func identifyButtonTapped() {
+    @IBAction func identifyButtonTapped(_ sender: Any) {
         guard !isProcessing else { return }
         isProcessing = true
         continuousResults.removeAll()
@@ -994,6 +979,15 @@ class ViewController: UIViewController {
             return
         }
         
+        // 保存當前照片
+        let ciImage = CIImage(cvPixelBuffer: currentBuffer)
+        let context = CIContext()
+        guard let cgImage = context.createCGImage(ciImage, from: ciImage.extent) else {
+            finishProcessing()
+            return
+        }
+        let capturedImage = UIImage(cgImage: cgImage)
+        
         // Process current frame
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
@@ -1001,7 +995,6 @@ class ViewController: UIViewController {
             let startTime = CACurrentMediaTime()
             
             // Process frame once but perform multiple feature matches
-            let ciImage = CIImage(cvPixelBuffer: currentBuffer)
             guard let croppedBuffer = self.preprocessImage(ciImage, bbox: bbox),
                   let feature = self.extractFeatures(from: croppedBuffer) else {
                 self.finishProcessing()
@@ -1100,10 +1093,79 @@ class ViewController: UIViewController {
                     self.resultLabels[index].text = ""
                 }
                 
+                // 添加兩次快速震動的觸覺反饋
+                let generator = UIImpactFeedbackGenerator(style: .medium)
+                generator.prepare()  // 預先準備震動器以減少延遲
+                
+                // 第一次震動
+                generator.impactOccurred()
+                
+                // 延遲 0.1 秒後進行第二次震動
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    generator.impactOccurred()
+                }
+                
+                // 保存結果和照片
+                self.saveResultAndPhoto(capturedImage: capturedImage, results: Array(topResults))
+                
+                // 10秒後自動清除結果
+                DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) { [weak self] in
+                    guard let self = self else { return }
+                    self.resultStackView.isHidden = true
+                    for label in self.resultLabels {
+                        label.text = ""
+                    }
+                    self.currentDonkeyName = nil
+                }
+                
                 self.isProcessing = false
                 self.labelName.text = "Ask ELVIS"
             }
         }
+    }
+    
+    private func saveResultAndPhoto(capturedImage: UIImage, results: [(key: String, value: (count: Int, maxScore: Float, totalScore: Float, minScore: Float))]) {
+        // 創建一個新的圖像上下文
+        let renderer = UIGraphicsImageRenderer(size: capturedImage.size)
+        
+        let finalImage = renderer.image { context in
+            // 繪製原始照片
+            capturedImage.draw(in: CGRect(origin: .zero, size: capturedImage.size))
+            
+            // 設置文字屬性
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.alignment = .left
+            
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 24, weight: .bold),
+                .foregroundColor: UIColor.white,
+                .paragraphStyle: paragraphStyle
+            ]
+            
+            // 繪製結果文字
+            var yOffset: CGFloat = 50
+            for (index, result) in results.enumerated() {
+                let donkeyName = result.key
+                let maxScore = result.value.maxScore
+                let normalizedScore = min(maxScore * 100, 100)
+                
+                let text = String(format: "%d. %@ (%.1f%%)", index + 1, donkeyName, normalizedScore)
+                let textRect = CGRect(x: 20, y: yOffset, width: capturedImage.size.width - 40, height: 30)
+                
+                // 添加文字背景
+                let backgroundRect = CGRect(x: textRect.minX - 10, y: textRect.minY - 5,
+                                          width: textRect.width + 20, height: textRect.height + 10)
+                context.cgContext.setFillColor(UIColor.black.withAlphaComponent(0.6).cgColor)
+                context.cgContext.fill(backgroundRect)
+                
+                // 繪製文字
+                text.draw(in: textRect, withAttributes: attributes)
+                yOffset += 40
+            }
+        }
+        
+        // 保存到相簿
+        UIImageWriteToSavedPhotosAlbum(finalImage, self, #selector(image(_:didFinishSavingWithError:contextInfo:)), nil)
     }
     
     private func finishProcessing() {
@@ -1131,6 +1193,153 @@ class ViewController: UIViewController {
         // Update label on main thread
         DispatchQueue.main.async {
             self.statusLabel.text = statusText
+        }
+    }
+
+    private func setupIdentifyButton() {
+        // 設置按鈕的玻璃效果
+        let buttonBlurEffect = UIBlurEffect(style: .systemUltraThinMaterial)
+        let buttonBlurView = UIVisualEffectView(effect: buttonBlurEffect)
+        buttonBlurView.frame = identifyButton.bounds
+        buttonBlurView.isUserInteractionEnabled = false
+        buttonBlurView.alpha = 0.9  // 按鈕背景更不透明
+        buttonBlurView.layer.cornerRadius = 16
+        buttonBlurView.clipsToBounds = true
+        identifyButton.insertSubview(buttonBlurView, at: 0)
+        
+        // 設置按鈕樣式
+        identifyButton.backgroundColor = .clear
+        identifyButton.layer.cornerRadius = 16
+        identifyButton.layer.masksToBounds = true
+        
+        // 設置按鈕文字顏色和字體大小
+        identifyButton.setTitleColor(.black, for: .normal)
+        identifyButton.titleLabel?.font = .systemFont(ofSize: 18, weight: .semibold)  // 按鈕文字加粗
+        identifyButton.titleLabel?.textAlignment = .center
+        
+        // 添加邊框
+        let borderLayer = CALayer()
+        borderLayer.frame = identifyButton.bounds
+        borderLayer.cornerRadius = 16
+        borderLayer.borderWidth = 2.0  // 按鈕邊框更粗
+        borderLayer.borderColor = UIColor(white: 1.0, alpha: 0.5).cgColor  // 按鈕邊框更明顯
+        identifyButton.layer.addSublayer(borderLayer)
+        
+        // 添加陰影
+        identifyButton.layer.shadowColor = UIColor.black.cgColor
+        identifyButton.layer.shadowOffset = CGSize(width: 0, height: 8)  // 按鈕陰影更大
+        identifyButton.layer.shadowRadius = 12
+        identifyButton.layer.shadowOpacity = 0.2  // 按鈕陰影更明顯
+        
+        // 設置提示文字的容器視圖
+        let hintContainer = UIView()
+        hintContainer.translatesAutoresizingMaskIntoConstraints = false
+        hintContainer.backgroundColor = UIColor(white: 0.9, alpha: 0.15)  // 提示框背景更透明
+        hintContainer.layer.cornerRadius = 16
+        hintContainer.layer.masksToBounds = true
+        
+        // 添加毛玻璃效果
+        let hintBlurEffect = UIBlurEffect(style: .systemUltraThinMaterial)
+        let hintBlurView = UIVisualEffectView(effect: hintBlurEffect)
+        hintBlurView.frame = hintContainer.bounds
+        hintBlurView.isUserInteractionEnabled = false
+        hintBlurView.alpha = 0.6  // 提示框背景更透明
+        hintBlurView.layer.cornerRadius = 16
+        hintBlurView.clipsToBounds = true
+        hintContainer.insertSubview(hintBlurView, at: 0)
+        
+        // 添加邊框
+        let hintBorderLayer = CALayer()
+        hintBorderLayer.frame = hintContainer.bounds
+        hintBorderLayer.cornerRadius = 16
+        hintBorderLayer.borderWidth = 1.0  // 提示框邊框更細
+        hintBorderLayer.borderColor = UIColor(white: 1.0, alpha: 0.2).cgColor  // 提示框邊框更淡
+        hintContainer.layer.addSublayer(hintBorderLayer)
+        
+        // 設置提示文字
+        let hintLabel = UILabel()
+        hintLabel.text = "Point camera at donkey"
+        hintLabel.textColor = .black
+        hintLabel.textAlignment = .center
+        hintLabel.font = .systemFont(ofSize: 18, weight: .regular)  // 提示文字不加粗
+        hintLabel.alpha = 0.8  // 提示文字更透明
+        hintLabel.translatesAutoresizingMaskIntoConstraints = false
+        hintLabel.numberOfLines = 1
+        
+        // 將 hintLabel 添加到容器中
+        hintContainer.addSubview(hintLabel)
+        
+        // 將容器添加到主視圖
+        view.addSubview(hintContainer)
+        
+        // 設置約束
+        NSLayoutConstraint.activate([
+            // identifyButton 約束
+            identifyButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            identifyButton.bottomAnchor.constraint(equalTo: labelVersion.topAnchor, constant: -20),
+            identifyButton.widthAnchor.constraint(equalToConstant: 300),
+            identifyButton.heightAnchor.constraint(equalToConstant: 60),
+            
+            // 容器約束
+            hintContainer.centerXAnchor.constraint(equalTo: identifyButton.centerXAnchor),
+            hintContainer.bottomAnchor.constraint(equalTo: identifyButton.bottomAnchor),
+            hintContainer.widthAnchor.constraint(equalToConstant: 300),
+            hintContainer.heightAnchor.constraint(equalToConstant: 55),
+            
+            // 提示文字約束
+            hintLabel.centerXAnchor.constraint(equalTo: hintContainer.centerXAnchor),
+            hintLabel.centerYAnchor.constraint(equalTo: hintContainer.centerYAnchor),
+            hintLabel.leadingAnchor.constraint(equalTo: hintContainer.leadingAnchor, constant: 24),
+            hintLabel.trailingAnchor.constraint(equalTo: hintContainer.trailingAnchor, constant: -24)
+        ])
+        
+        // 添加容器的陰影
+        hintContainer.layer.shadowColor = UIColor.black.cgColor
+        hintContainer.layer.shadowOffset = CGSize(width: 0, height: 4)  // 提示框陰影更小
+        hintContainer.layer.shadowRadius = 8
+        hintContainer.layer.shadowOpacity = 0.1  // 提示框陰影更淡
+        
+        // 初始狀態：hintLabel 顯示，identifyButton 隱藏
+        hintContainer.isHidden = false
+        identifyButton.isHidden = true
+        
+        // 保存 hintContainer 的引用
+        self.hintContainer = hintContainer
+        
+        // 添加點擊動畫
+        identifyButton.addTarget(self, action: #selector(buttonTouchDown), for: .touchDown)
+        identifyButton.addTarget(self, action: #selector(buttonTouchUp), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        
+        // 確保按鈕文字在按鈕內
+        identifyButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
+        identifyButton.titleLabel?.adjustsFontSizeToFitWidth = true
+        identifyButton.titleLabel?.minimumScaleFactor = 0.5
+        
+        // 確保按鈕背景層正確更新
+        identifyButton.layoutIfNeeded()
+        buttonBlurView.frame = identifyButton.bounds
+        borderLayer.frame = identifyButton.bounds
+        
+        // 確保 hintContainer 背景層正確更新
+        hintContainer.layoutIfNeeded()
+        hintBlurView.frame = hintContainer.bounds
+        hintBorderLayer.frame = hintContainer.bounds
+    }
+    
+    @objc private func buttonTouchDown() {
+        UIView.animate(withDuration: 0.1) {
+            self.identifyButton.transform = CGAffineTransform(scaleX: 0.95, y: 0.95)  // 按鈕按下時縮放更明顯
+            self.identifyButton.alpha = 0.8  // 按鈕按下時透明度變化更明顯
+        }
+        // 添加觸覺反饋
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.impactOccurred()
+    }
+    
+    @objc private func buttonTouchUp() {
+        UIView.animate(withDuration: 0.1) {
+            self.identifyButton.transform = .identity
+            self.identifyButton.alpha = 1.0
         }
     }
 }
