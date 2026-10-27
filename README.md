@@ -6,6 +6,9 @@ Ask ELVIS is an iOS app that identifies individual donkeys by name from the phon
 
 The app is built on top of the [Ultralytics YOLO iOS app](https://github.com/ultralytics/yolo-ios-app) and adds a re-identification stage on top of YOLO detection.
 
+<p align="center"><img src="docs/images/app-in-use.webp" alt="Ask ELVIS detecting a donkey at the sanctuary" width="640"><br>
+<em>Ask ELVIS in use at the sanctuary. Photo: Isle of Wight Donkey Sanctuary / University of Southampton, via <a href="https://www.bbc.com/news/articles/cgrxjd1l2p1o">BBC News</a></em></p>
+
 ## How it works
 
 ```
@@ -66,7 +69,7 @@ The donkey name is taken from the label text before the last `_`. To add a donke
 - University of Southampton — [AI to be used for donkey identification](https://www.southampton.ac.uk/news/2025/06/ai-to-be-used-for-donkey-identification.page) (17 June 2025)
 - ITV News — [Artificial intelligence tech developed for donkey sanctuary](https://www.itv.com/watch/news/artificial-intelligence-tech-developed-for-donkey-sanctuary/86rw4h6) (16 June 2025)
 - OnTheWight — [Ask ELVIS: New AI app to help visitors connect with donkeys at sanctuary](https://onthewight.com/ask-elvis-new-ai-app-to-help-visitors-connect-with-donkeys-at-sanctuary/)
-- BBC News — *AI to help tell donkeys apart at island sanctuary* (18 June 2025)
+- BBC News — [AI to help tell donkeys apart at island sanctuary](https://www.bbc.com/news/articles/cgrxjd1l2p1o) (18 June 2025)
 
 ## Related repositories
 
