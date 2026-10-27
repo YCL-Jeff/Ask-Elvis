@@ -1,96 +1,81 @@
-Ask Elvis: Equine Long-Range Visual Identification System
+# Ask ELVIS — Donkey Identification iOS App
 
-Welcome to the Ask Elvis iOS App repository, developed for the Isle of Wight Donkey Sanctuary. This app leverages advanced object detection models under a non-commercial license from Ultralytics to enable long-range visual identification of donkeys by name. Designed for sanctuary staff and visitors, Ask Elvis enhances donkey recognition, supporting welfare and educational activities at the sanctuary.
+<p align="center"><img src="AskELVIS.jpg" alt="Ask ELVIS launch screen" width="240"></p>
 
-🛠 Project Overview
+Ask ELVIS is an iOS app that identifies individual donkeys by name from the phone camera. It was developed at the University of Southampton with the Isle of Wight Donkey Sanctuary, so that staff and visitors can point a phone at a donkey and see who it is.
 
-Ask Elvis is an iOS application designed to identify donkeys by name at the Isle of Wight Donkey Sanctuary using long-range visual detection. The app supports sanctuary operations by aiding staff in tracking donkey health and welfare and enhances visitor engagement through interactive donkey identification. My contributions include:
+The app is built on top of the [Ultralytics YOLO iOS app](https://github.com/ultralytics/yolo-ios-app) and adds a re-identification stage on top of YOLO detection.
 
-ONNX Conversion: Converted trained models to ONNX format for efficient deployment on iOS, ensuring compatibility with CoreML.
+## How it works
 
-App Architecture: Developed a modular Swift-based app with a focus on user-friendly interfaces for sanctuary staff and visitors.
+```
+Camera frame
+  └─ YOLO detector (best.mlpackage, CoreML)        → finds the donkey bounding box (confidence > 0.4)
+       └─ crop + resize to 224×224
+            └─ MegaDescriptor (MegaDescriptor.mlpackage) → 768-dim feature vector
+                 └─ compare against reference gallery   → top-3 names with scores
+                    (features_and_labels.json)
+```
 
-Performance Optimization: Optimized model inference through quantization, reducing latency for real-time identification on iOS devices.
+1. **Detection** — a custom YOLO model (`Models/best.mlpackage`) runs on every camera frame through Vision (`VNCoreMLRequest`). Boxes that cover more than 80% of the frame are discarded as false detections.
+2. **Feature extraction** — when the user taps *Identify*, the detected box is cropped, resized to 224×224 and passed to `Models/MegaDescriptor.mlpackage`, which outputs a 768-dimensional embedding.
+3. **Matching** — the embedding is compared with every reference embedding in `Models/features_and_labels.json` (1,620 reference images covering 115 labels). The similarity score combines cosine similarity, Euclidean distance and Manhattan distance on L2-normalised vectors. Matches are grouped by donkey name and ranked by a weighted mix of the best, mean and worst score; the top 3 are shown.
+4. **Result** — the top name is shown on screen, and the user can open that donkey's page on the sanctuary website or save the annotated photo to the photo library.
 
-Technical Considerations
+## Repository contents
 
-Model Conversion: Models are converted to ONNX with preprocessing steps including image normalization and resizing to 640x640. Input data uses RGB images with bounding box annotations in normalized coordinates, aligned with app requirements.
+| Path | Description |
+|---|---|
+| `ViewController.swift` | Main screen: camera preview, detection, identification, matching and UI |
+| `VideoCapture.swift` | AVFoundation camera capture |
+| `AppDelegate.swift` | App entry point |
+| `Utilities/BoundingBoxView.swift` | Draws detection boxes and labels |
+| `Utilities/ThresholdProvider.swift` | IoU / confidence thresholds for the Vision request |
+| `Models/best.mlpackage` | Donkey detector (YOLO, CoreML) |
+| `Models/MegaDescriptor.mlpackage` | Feature extractor for re-identification (CoreML) |
+| `Models/features_and_labels.json` | Reference gallery: 1,620 embeddings with image labels (`Name_00000.jpg`) |
+| `Main.storyboard`, `LaunchScreen.storyboard`, `Assets.xcassets`, `Settings.bundle`, `Info.plist` | UI and app resources |
 
-Target Devices: The app targets iOS devices running iOS 14.0 or later (iOS 17.0+ for optimized models). Minimum hardware is iPhone 8 or newer with an A11 Bionic chip.
+> The Xcode project file (`.xcodeproj`) is not included in this repository. The source files are meant to replace the corresponding files in the Ultralytics YOLO iOS app project.
 
-Experimental Plan: Testing involves evaluating quantized models for accuracy (mAP) and inference time across devices (e.g., iPhone 12 vs. iPhone 15). Sample data from the sanctuary (e.g., donkey images with name labels) would aid deployment testing.
+## Build
 
-Application Scenarios: Features include offline identification for remote areas of the sanctuary and database synchronization to log donkey sightings, pending discussion with sanctuary staff.
+Requirements: a Mac with Xcode, an iPhone (camera required — the simulator cannot run the camera pipeline) and an Apple Developer account for signing.
 
-🛠 Quickstart: Setting Up Ask Elvis
+1. Clone the Ultralytics base project and this repository:
+   ```bash
+   git clone https://github.com/ultralytics/yolo-ios-app.git
+   git clone https://github.com/YCL-Jeff/Ask-Elvis.git
+   ```
+2. Open the Ultralytics project in Xcode and replace its app source files, storyboards and assets with the files from this repository.
+3. Add `Models/best.mlpackage`, `Models/MegaDescriptor.mlpackage` and `Models/features_and_labels.json` to the app target (*Copy Bundle Resources*). The app looks them up by these names at launch.
+4. Select your team under *Signing & Capabilities*, connect the iPhone and run.
 
-Prerequisites
+## Updating the reference gallery
 
-Xcode: Install from the Mac App Store.
+`features_and_labels.json` has the format:
 
-iOS Device: Requires iPhone/iPad running iOS 14.0 or later (iOS 17.0+ for optimized models).
+```json
+{ "features": [[768 floats], ...], "labels": ["Amber_00000.jpg", ...] }
+```
 
-Apple Developer Account: Sign up at developer.apple.com.
+The donkey name is taken from the label text before the last `_`. To add a donkey, generate MegaDescriptor embeddings for its photos with the same 224×224 preprocessing and append them with labels in the same format.
 
-Installation
+## In the news
 
-Clone the Repository:
+- University of Southampton — [AI to be used for donkey identification](https://www.southampton.ac.uk/news/2025/06/ai-to-be-used-for-donkey-identification.page) (17 June 2025)
+- ITV News — [Artificial intelligence tech developed for donkey sanctuary](https://www.itv.com/watch/news/artificial-intelligence-tech-developed-for-donkey-sanctuary/86rw4h6) (16 June 2025)
+- OnTheWight — [Ask ELVIS: New AI app to help visitors connect with donkeys at sanctuary](https://onthewight.com/ask-elvis-new-ai-app-to-help-visitors-connect-with-donkeys-at-sanctuary/)
+- BBC News — *AI to help tell donkeys apart at island sanctuary* (18 June 2025)
 
-git clone https://github.com/ultralytics/yolo-ios-app.git
+## Related repositories
 
-Open in Xcode:
+- [Ask-Elvis_Flutter](https://github.com/YCL-Jeff/Ask-Elvis_Flutter) — cross-platform Flutter prototype of the app UI
 
-Open YOLO.xcodeproj in Xcode. Select your Apple Developer account under "Signing & Capabilities."
+## Licence
 
-Add Models:
+This app is derived from the Ultralytics YOLO iOS app, which is licensed under [AGPL-3.0](https://github.com/ultralytics/yolo-ios-app/blob/main/LICENSE). Donkey photos and names belong to the Isle of Wight Donkey Sanctuary.
 
-Convert trained models to ONNX or CoreML format:
+## Author
 
-from ultralytics import YOLO
-
-model = YOLO("path/to/donkey_model.pt") model.export(format="onnx", int8=True, imgsz=640)
-
-Place models in the YOLO/Models directory.
-
-Run the App:
-
-Connect your iOS device, select it as the run target, and click Run in Xcode.
-
-🚀 Usage
-
-Real-Time Identification: Point the camera at a donkey to display its name and details (e.g., Jimbob, Angel).
-
-Model Selection: Choose from model sizes (nano to x-large) based on device capability and detection range.
-
-📚 Research Plan (ELEC6259 Coursework #3)
-
-Aims: Develop an iOS app for long-range donkey name identification to support Isle of Wight Donkey Sanctuary operations and visitor engagement.
-
-Methodology: Use ONNX for model conversion, Swift for app development, and CoreML for inference. Train models on sanctuary-provided donkey images with name labels. Test on iOS devices for accuracy and speed.
-
-Timeline: Weeks 1–4: Model training and conversion; Weeks 5–8: App development and UI design; Weeks 9–12: Performance testing and refinement (Gantt chart in coursework submission).
-
-Ethical Statement: No human data involved; ethical approval not required. The app respects donkey welfare by minimizing interaction stress.
-
-Health and Safety: No significant risks; app usage adheres to sanctuary safety guidelines (e.g., no smoking/vaping on-site).
-
-Environmental Impact: Minimal, leveraging existing devices for sustainable technology use.
-
-Data Management Plan: Detection logs stored securely on-device with optional cloud sync, encrypted to protect sanctuary data.
-
-Commercial Aspects: Limited to non-commercial use under Ultralytics’ license, with potential for educational tools at the sanctuary.
-
-Legal Aspects: Complies with Ultralytics’ non-commercial license and Apple’s App Store policies. No personal data collected, aligning with GDPR.
-
-💡 Contribute
-
-Contributions are welcome! Review our Contributing Guide and share feedback via our Survey.
-
-📄 License
-
-This project uses a non-commercial license from Ultralytics. See the LICENSE file for details.
-
-🤝 Contact
-
-For issues or questions, use GitHub Issues or join our Discord.
-# Ask-Elvis
+Yu-Cheng Lai ([YCL-Jeff](https://github.com/YCL-Jeff)), University of Southampton
